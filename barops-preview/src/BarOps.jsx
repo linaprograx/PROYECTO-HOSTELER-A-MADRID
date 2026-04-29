@@ -2832,11 +2832,28 @@ export default function BarOps() {
   const fetchLocalName = async () => {
     try {
       if (!supabase) return;
-      const { data, error } = await supabase.from('locales').select('nombre').eq('id', '00000000-0000-0000-0000-000000000001').single();
+
+      // Asegurar que existe la fila del local — si no existe, la crea con el nombre guardado
+      const savedName = localStorage.getItem('barops_local_name') || 'Mi Local';
+      await supabase.from('locales').upsert(
+        { id: '00000000-0000-0000-0000-000000000001', nombre: savedName },
+        { onConflict: 'id', ignoreDuplicates: true }
+      );
+
+      const { data, error } = await supabase
+        .from('locales')
+        .select('nombre')
+        .eq('id', '00000000-0000-0000-0000-000000000001')
+        .single();
+
       if (error) throw error;
-      if (data?.nombre) setLocalName(data.nombre);
+      if (data?.nombre) {
+        setLocalName(data.nombre);
+        localStorage.setItem('barops_local_name', data.nombre);
+      }
     } catch (err) {
       console.error('Error fetching local name:', err);
+      // En caso de error, el localStorage ya tiene el valor correcto
     }
   };
 
