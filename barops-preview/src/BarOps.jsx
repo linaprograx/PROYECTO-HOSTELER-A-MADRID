@@ -9,7 +9,7 @@ import {
   AlertTriangle, CheckCircle, Clock, TrendingUp, TrendingDown,
   Send, HelpCircle, Plus, Bell, X, Zap,
   ShoppingCart, ChevronDown, ChevronUp, UserCheck,
-  BookOpen, Trash2, CreditCard,
+  BookOpen, Trash2, CreditCard, Store,
 } from 'lucide-react';
 
 // ─── TOKENS ───────────────────────────────────────────────────────────────────
@@ -564,7 +564,7 @@ function TypingDots() {
 }
 
 // ─── SIDEBAR ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, setActive }) {
+function Sidebar({ active, setActive, localName }) {
   const [mobile, setMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -582,6 +582,7 @@ function Sidebar({ active, setActive }) {
     { id:'agente',     Icon:Bot,             label:'AGENTE IA'  },
     { id:'analytics',  Icon:BarChart2,       label:'ANALYTICS'  },
     { id:'carta',      Icon:BookOpen,        label:'CARTA'      },
+    { id:'local',      Icon:Store,           label:'LOCAL'      },
     { id:'pricing',    Icon:CreditCard,      label:'BILLING'    },
   ];
 
@@ -598,7 +599,7 @@ function Sidebar({ active, setActive }) {
       </div>
       <div style={{ padding:'14px 22px 16px', borderBottom:`1px solid ${C.border}` }}>
         <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>LOCAL</div>
-        <div style={{ fontFamily:F, fontSize:'13px', color:C.text, lineHeight:'1.35' }}>Paradiso Cocktail Bar</div>
+        <div style={{ fontFamily:F, fontSize:'13px', color:C.text, lineHeight:'1.35' }}>{localName}</div>
         <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:8 }}>
           <div style={{ width:7, height:7, borderRadius:'50%', background:C.teal, boxShadow:`0 0 8px ${C.teal}` }}/>
           <span style={{ fontFamily:F, fontSize:'9px', color:C.teal, letterSpacing:'1.5px' }}>SISTEMA ACTIVO</span>
@@ -2579,6 +2580,186 @@ function PaymentSuccess() {
   );
 }
 
+// ─── SCREEN: LOCAL ────────────────────────────────────────────────────────────
+function Local({ localName, onLocalNameChange }) {
+  const [formData, setFormData] = useState({ nombre:'', direccion:'', ciudad:'', aforo:'' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [prefs, setPrefs] = useState({
+    stockAlerts: JSON.parse(localStorage.getItem('barops_stock_alerts') || 'true'),
+    shiftNotifs: JSON.parse(localStorage.getItem('barops_shift_notifs') || 'true'),
+    compactMode: JSON.parse(localStorage.getItem('barops_compact_mode') || 'false'),
+  });
+
+  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
+
+  useEffect(() => {
+    fetchLocalData();
+  }, []);
+
+  const fetchLocalData = async () => {
+    try {
+      if (!supabase) throw new Error('Supabase no conectado');
+      const { data, error } = await supabase.from('locales').select('*').eq('id', LOCAL_ID).single();
+      if (error) throw error;
+      setFormData({
+        nombre: data.nombre || '',
+        direccion: data.direccion || '',
+        ciudad: data.ciudad || '',
+        aforo: data.aforo || ''
+      });
+    } catch (err) {
+      console.error('Error fetching local data:', err);
+      setToast('Error al cargar datos del local');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      if (!supabase) throw new Error('Supabase no conectado');
+      const { error } = await supabase.from('locales').update(formData).eq('id', LOCAL_ID);
+      if (error) throw error;
+      onLocalNameChange(formData.nombre);
+      setToast('Cambios guardados correctamente');
+    } catch (err) {
+      console.error('Error saving local data:', err);
+      setToast('Error al guardar cambios');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const togglePref = (key) => {
+    const newVal = !prefs[key];
+    setPrefs(p => ({...p, [key]: newVal}));
+    localStorage.setItem(`barops_${key}`, JSON.stringify(newVal));
+  };
+
+  if (loading) {
+    return (
+      <div style={{ flex:1, padding:'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
+        <div style={{ color:C.teal, fontSize:'14px', letterSpacing:'2px' }}>CARGANDO...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
+      {toast && <Toast msg={toast} onClose={()=>setToast(null)}/>}
+
+      <div style={{ marginBottom:32 }}>
+        <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0, marginBottom:8 }}>CONFIGURACIÓN LOCAL</h1>
+        <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:0 }}>
+          Gestiona la información de tu establecimientos y preferencias del sistema
+        </p>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:24, marginBottom:32 }}>
+        <Card sx={{ padding:24 }}>
+          <h2 style={{ fontFamily:F, fontSize:'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px', marginBottom:18 }}>PERFIL DEL LOCAL</h2>
+          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            <div>
+              <label style={{ display:'block', fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>NOMBRE</label>
+              <input
+                type="text"
+                value={formData.nombre}
+                onChange={(e) => setFormData(p=>({...p, nombre:e.target.value}))}
+                style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
+              />
+            </div>
+            <div>
+              <label style={{ display:'block', fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>DIRECCIÓN</label>
+              <input
+                type="text"
+                value={formData.direccion}
+                onChange={(e) => setFormData(p=>({...p, direccion:e.target.value}))}
+                style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
+              />
+            </div>
+            <div>
+              <label style={{ display:'block', fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CIUDAD</label>
+              <input
+                type="text"
+                value={formData.ciudad}
+                onChange={(e) => setFormData(p=>({...p, ciudad:e.target.value}))}
+                style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
+              />
+            </div>
+            <div>
+              <label style={{ display:'block', fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>AFORO</label>
+              <input
+                type="number"
+                value={formData.aforo}
+                onChange={(e) => setFormData(p=>({...p, aforo:parseInt(e.target.value) || 0}))}
+                style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
+              />
+            </div>
+            <Btn
+              onClick={handleSave}
+              disabled={saving}
+              sx={{ width:'100%', marginTop:8, justifyContent:'center', padding:'10px', fontSize:'11px' }}
+            >
+              {saving ? 'GUARDANDO...' : 'GUARDAR CAMBIOS'}
+            </Btn>
+          </div>
+        </Card>
+
+        <div style={{ display:'flex', flexDirection:'column', gap:24 }}>
+          <Card sx={{ padding:24 }}>
+            <h2 style={{ fontFamily:F, fontSize:'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px' }}>PLAN ACTUAL</h2>
+            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              <div>
+                <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 }}>PLAN</div>
+                <div style={{ fontFamily:F, fontSize:'16px', color:C.orange, fontWeight:700, letterSpacing:'2px' }}>PRO</div>
+              </div>
+              <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:12 }}>
+                <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 }}>ESTADO</div>
+                <div style={{ fontFamily:F, fontSize:'13px', color:C.teal, fontWeight:700 }}>ACTIVO</div>
+              </div>
+              <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:12 }}>
+                <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 }}>INICIO</div>
+                <div style={{ fontFamily:F, fontSize:'13px', color:C.text }}>29 de abril, 2026</div>
+              </div>
+            </div>
+          </Card>
+
+          <Card sx={{ padding:24 }}>
+            <h2 style={{ fontFamily:F, fontSize:'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px' }}>PREFERENCIAS</h2>
+            <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+              {[
+                { key:'stockAlerts', label:'Alertas de stock crítico' },
+                { key:'shiftNotifs', label:'Notificaciones de turnos' },
+                { key:'compactMode', label:'Modo compacto de inventario' }
+              ].map(({ key, label }) => (
+                <div key={key} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', paddingBottom:12, borderBottom:`1px solid ${C.border2}` }}>
+                  <span style={{ fontFamily:F, fontSize:'12px', color:C.text }}>{label}</span>
+                  <button
+                    onClick={() => togglePref(key)}
+                    style={{
+                      width:36, height:20, borderRadius:10, border:'none', cursor:'pointer',
+                      background: prefs[key] ? C.teal : C.border2,
+                      position:'relative', transition:'all 0.2s'
+                    }}
+                  >
+                    <div style={{
+                      width:16, height:16, borderRadius:'50%', background:C.bg, position:'absolute',
+                      top:2, left: prefs[key] ? 18 : 2, transition:'left 0.2s'
+                    }}/>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 export default function BarOps() {
   const params = new URLSearchParams(window.location.search);
@@ -2586,8 +2767,24 @@ export default function BarOps() {
   const [screen, setScreen]       = useState(initialScreen);
   const [customIngs, setCustomIngs] = useState([]);
   const [customInv,  setCustomInv]  = useState([]);
+  const [localName, setLocalName]  = useState('Paradiso Cocktail Bar');
 
   const [inventoryLoading, setInventoryLoading] = useState(true);
+
+  const fetchLocalName = async () => {
+    try {
+      if (!supabase) return;
+      const { data, error } = await supabase.from('locales').select('nombre').eq('id', '00000000-0000-0000-0000-000000000001').single();
+      if (error) throw error;
+      if (data?.nombre) setLocalName(data.nombre);
+    } catch (err) {
+      console.error('Error fetching local name:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchLocalName();
+  }, []);
 
   const fetchInventory = async () => {
     setInventoryLoading(true);
@@ -2661,7 +2858,7 @@ export default function BarOps() {
     }
   };
 
-  const ctx = { customIngs, customInv, addFromImport, inventoryLoading };
+  const ctx = { customIngs, customInv, addFromImport, inventoryLoading, localName, setLocalName };
 
   const SCREENS = {
     dashboard:  <Dashboard/>,
@@ -2670,6 +2867,7 @@ export default function BarOps() {
     agente:     <AgenteIA/>,
     analytics:  <Analytics/>,
     carta:      <Carta/>,
+    local:      <Local localName={localName} onLocalNameChange={setLocalName}/>,
     pricing:    <Pricing/>,
     success:    <PaymentSuccess/>,
   };
@@ -2700,7 +2898,7 @@ export default function BarOps() {
             body { font-size: 14px; }
           }
         `}</style>
-        <Sidebar active={screen} setActive={setScreen}/>
+        <Sidebar active={screen} setActive={setScreen} localName={localName}/>
         <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', marginTop:isMobile?60:0 }}>
           {SCREENS[screen]}
         </div>
