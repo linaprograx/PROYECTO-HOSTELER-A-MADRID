@@ -1173,14 +1173,61 @@ function ImportModal({ onClose }) {
 // ─── SCREEN 2: INVENTARIO ─────────────────────────────────────────────────────
 function Inventario() {
   const { customInv = [], inventoryLoading = false } = useApp() || {};
-  const [filter, setFilter]       = useState('all');
+  const [riskFilter, setRiskFilter]       = useState('all');
+  const [categoryTab, setCategoryTab]     = useState('all');
+  const [searchQuery, setSearchQuery]     = useState('');
   const [toast, setToast]         = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [consumptionModal, setConsumptionModal] = useState(null);
   const [customConsumption, setCustomConsumption] = useState({});
   const allItems = [...customInv];
-  const FILTERS = [{ id:'all',label:'TODOS' },{ id:'critical',label:'EN RIESGO' },{ id:'medium',label:'PREVENTIVO' },{ id:'stable',label:'ESTABLE' }];
-  const visible = filter==='all'?allItems:allItems.filter(i=>i.risk===filter);
+
+  const RISK_FILTERS = [{ id:'all',label:'TODOS' },{ id:'critical',label:'EN RIESGO' },{ id:'medium',label:'PREVENTIVO' },{ id:'stable',label:'ESTABLE' }];
+
+  const CATEGORY_KEYWORDS = {
+    destilados: ['ginebra', 'vodka', 'ron', 'whisky', 'tequila', 'mezcal', 'brandy', 'cognac', 'destilado', 'licor', 'vermut', 'amaro', 'bitter', 'aperitivo', 'espumoso', 'vino', 'cava', 'champagne', 'cerveza'],
+    frutas: ['fruta', 'fresco', 'fresca', 'zumo', 'jugo', 'cítrico', 'hierba', 'flor', 'vegetal', 'verdura'],
+    secos: ['seco', 'fruto seco', 'deshidratado', 'especia', 'semilla', 'hoja seca', 'polvo natural'],
+    texturizantes: ['texturizante', 'químico', 'gelificante', 'emulsionante', 'esferificación', 'agar', 'lecitina', 'xantana', 'metil'],
+    mixers: ['mixer', 'tónica', 'soda', 'ginger', 'agua', 'refresco', 'sirope', 'jarabe', 'azúcar']
+  };
+
+  const getCategory = (cat) => {
+    if (!cat) return 'otros';
+    const lower = cat.toLowerCase();
+    for (const [key, words] of Object.entries(CATEGORY_KEYWORDS)) {
+      if (words.some(w => lower.includes(w))) return key;
+    }
+    return 'otros';
+  };
+
+  const CATEGORY_TABS = [
+    { id:'all', label:'TODOS' },
+    { id:'destilados', label:'DESTILADOS' },
+    { id:'frutas', label:'FRUTAS Y FRESCOS' },
+    { id:'secos', label:'SECOS' },
+    { id:'texturizantes', label:'TEXTURIZANTES' },
+    { id:'mixers', label:'MIXERS' },
+    { id:'otros', label:'OTROS' }
+  ];
+
+  let visible = allItems;
+
+  if (searchQuery.trim()) {
+    const query = searchQuery.toLowerCase();
+    visible = visible.filter(i =>
+      i.name.toLowerCase().includes(query) ||
+      (i.cat && i.cat.toLowerCase().includes(query))
+    );
+  } else {
+    if (categoryTab !== 'all') {
+      visible = visible.filter(i => getCategory(i.cat) === categoryTab);
+    }
+  }
+
+  if (riskFilter !== 'all') {
+    visible = visible.filter(i => i.risk === riskFilter);
+  }
 
   const saveConsumption = (itemId, weekly) => {
     setCustomConsumption(p=>({...p,[itemId]:weekly}));
@@ -1224,59 +1271,91 @@ function Inventario() {
           IMPORTAR ALMACÉN
         </Btn>
       </div>
+      <input
+        type="text"
+        placeholder="Buscar producto..."
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        style={{
+          width:'100%', padding:'10px 14px', marginBottom:18, borderRadius:4, fontFamily:F, fontSize:'13px',
+          background:C.cardAlt, border:`1px solid ${C.border2}`, color:C.text, outline:'none',
+          transition:'all 0.2s'
+        }}
+        onFocus={(e) => e.target.style.borderColor = C.orange}
+        onBlur={(e) => e.target.style.borderColor = C.border2}
+      />
+
+      <div style={{ display:'flex', gap:8, marginBottom:18, overflowX:'auto', paddingBottom:4 }}>
+        {CATEGORY_TABS.map(tab=>(
+          <button key={tab.id} onClick={()=>setCategoryTab(tab.id)} style={{
+            padding:'6px 16px', borderRadius:2, fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap',
+            background:categoryTab===tab.id?C.orange:C.cardAlt, color:categoryTab===tab.id?'#000':C.textSec,
+            border:categoryTab===tab.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`, transition:'all 0.12s',
+          }}>{tab.label}</button>
+        ))}
+      </div>
+
       <div style={{ display:'flex', gap:8, marginBottom:18 }}>
-        {FILTERS.map(f=>(
-          <button key={f.id} onClick={()=>setFilter(f.id)} style={{
+        {RISK_FILTERS.map(f=>(
+          <button key={f.id} onClick={()=>setRiskFilter(f.id)} style={{
             padding:'6px 16px', borderRadius:2, fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700, cursor:'pointer',
-            background:filter===f.id?C.orange:C.cardAlt, color:filter===f.id?'#000':C.textSec,
-            border:filter===f.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`, transition:'all 0.12s',
+            background:riskFilter===f.id?C.orange:C.cardAlt, color:riskFilter===f.id?'#000':C.textSec,
+            border:riskFilter===f.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`, transition:'all 0.12s',
           }}>{f.label}</button>
         ))}
       </div>
-      <Card sx={{ marginBottom:22, overflow:'hidden' }}>
-        <table style={{ width:'100%', borderCollapse:'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom:`1px solid ${C.border2}`, background:C.cardAlt }}>
-              {['PRODUCTO','CATEGORÍA','STOCK ACTUAL','USO SEMANAL','DÍAS RESTANTES','COSTE/USO','ACCIÓN'].map(h=>(
-                <th key={h} style={{ padding:'12px 16px', textAlign:'left', fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((item,i)=>{
-              const displayWeekly = customConsumption[item.id] || item.weekly;
-              return (
-              <tr key={item.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
-                <td style={{ padding:'13px 16px', fontSize:'13px', color:C.text, fontWeight:700 }}>{item.name}</td>
-                <td style={{ padding:'13px 16px', fontSize:'11px', color:C.textSec }}>{item.cat}</td>
-                <td style={{ padding:'13px 16px', fontSize:'13px', color:C.text }}>{item.stock}</td>
-                <td style={{ padding:'13px 16px' }}>
-                  <div style={{ fontSize:'12px', color:customConsumption[item.id]?C.teal:C.textSec, fontWeight:customConsumption[item.id]?700:400 }}>
-                    {displayWeekly}
-                  </div>
-                  <button onClick={()=>setConsumptionModal(item)} style={{ marginTop:4, fontSize:'9px', color:C.amber, background:'none', border:'none', cursor:'pointer', letterSpacing:'1px', textDecoration:'underline' }}>
-                    Editar
-                  </button>
-                </td>
-                <td style={{ padding:'13px 16px' }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                    <StockBar pct={item.pct}/>
-                    <span style={{ fontFamily:F, fontSize:'12px', fontWeight:700, color:item.days<=3?'#EF4444':item.days<=7?C.amber:C.teal }}>{item.days}d</span>
-                  </div>
-                </td>
-                <td style={{ padding:'13px 16px', fontSize:'12px', color:C.teal }}>{item.cost}</td>
-                <td style={{ padding:'13px 16px' }}>
-                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                    <RiskBadge risk={item.risk}/>
-                    {item.risk!=='stable'&&<Btn variant="outline" sx={{ padding:'4px 10px', fontSize:'9px' }} onClick={()=>setToast(`Pedido de ${item.name} añadido a la lista`)}>PEDIR</Btn>}
-                  </div>
-                </td>
+      {visible.length === 0 && searchQuery.trim() ? (
+        <Card sx={{ marginBottom:22, padding:32, textAlign:'center' }}>
+          <p style={{ color:C.textSec, fontSize:'13px', letterSpacing:'1px' }}>
+            Sin resultados para "<strong style={{ color:C.text }}>{searchQuery}</strong>"
+          </p>
+        </Card>
+      ) : (
+        <Card sx={{ marginBottom:22, overflow:'hidden' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom:`1px solid ${C.border2}`, background:C.cardAlt }}>
+                {['PRODUCTO','CATEGORÍA','STOCK ACTUAL','USO SEMANAL','DÍAS RESTANTES','COSTE/USO','ACCIÓN'].map(h=>(
+                  <th key={h} style={{ padding:'12px 16px', textAlign:'left', fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
+                ))}
               </tr>
-            );
-            })}
-          </tbody>
-        </table>
-      </Card>
+            </thead>
+            <tbody>
+              {visible.map((item,i)=>{
+                const displayWeekly = customConsumption[item.id] || item.weekly;
+                return (
+                <tr key={item.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
+                  <td style={{ padding:'13px 16px', fontSize:'13px', color:C.text, fontWeight:700 }}>{item.name}</td>
+                  <td style={{ padding:'13px 16px', fontSize:'11px', color:C.textSec }}>{item.cat}</td>
+                  <td style={{ padding:'13px 16px', fontSize:'13px', color:C.text }}>{item.stock}</td>
+                  <td style={{ padding:'13px 16px' }}>
+                    <div style={{ fontSize:'12px', color:customConsumption[item.id]?C.teal:C.textSec, fontWeight:customConsumption[item.id]?700:400 }}>
+                      {displayWeekly}
+                    </div>
+                    <button onClick={()=>setConsumptionModal(item)} style={{ marginTop:4, fontSize:'9px', color:C.amber, background:'none', border:'none', cursor:'pointer', letterSpacing:'1px', textDecoration:'underline' }}>
+                      Editar
+                    </button>
+                  </td>
+                  <td style={{ padding:'13px 16px' }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                      <StockBar pct={item.pct}/>
+                      <span style={{ fontFamily:F, fontSize:'12px', fontWeight:700, color:item.days<=3?'#EF4444':item.days<=7?C.amber:C.teal }}>{item.days}d</span>
+                    </div>
+                  </td>
+                  <td style={{ padding:'13px 16px', fontSize:'12px', color:C.teal }}>{item.cost}</td>
+                  <td style={{ padding:'13px 16px' }}>
+                    <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                      <RiskBadge risk={item.risk}/>
+                      {item.risk!=='stable'&&<Btn variant="outline" sx={{ padding:'4px 10px', fontSize:'9px' }} onClick={()=>setToast(`Pedido de ${item.name} añadido a la lista`)}>PEDIR</Btn>}
+                    </div>
+                  </td>
+                </tr>
+              );
+              })}
+            </tbody>
+          </table>
+        </Card>
+      )}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:16 }}>
         <Card accent={C.purple} sx={{ padding:20 }}>
           <SLabel label="PREDICCIÓN ESTE FIN DE SEMANA" color={C.purple} icon={Zap}/>
