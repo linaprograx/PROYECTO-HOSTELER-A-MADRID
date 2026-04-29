@@ -1,0 +1,8 @@
+{
+  "name": "barops-root",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "stripe": "^22.1.0"
+  }
+}
