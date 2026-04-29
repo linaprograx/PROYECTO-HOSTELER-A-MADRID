@@ -2295,8 +2295,8 @@ function Pricing() {
     }
   };
 
-  const monthlyPrice = import.meta.env.VITE_STRIPE_PRICE_MONTHLY;
-  const annualPrice = import.meta.env.VITE_STRIPE_PRICE_ANNUAL;
+  const monthlyPrice = import.meta.env.VITE_STRIPE_PRICE_MONTHLY || 'price_1TRO20BJLboiQ0lfe7vjpMaq';
+  const annualPrice = import.meta.env.VITE_STRIPE_PRICE_ANNUAL || 'price_1TRNylBJLboiQ0lfk73lPLeu';
 
   return (
     <div style={{ flex:1, overflow:'auto', padding:'40px 60px' }}>
@@ -2314,7 +2314,7 @@ function Pricing() {
             <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>PLAN</div>
             <div style={{ fontFamily:F, fontSize:'28px', fontWeight:700, color:C.text, marginBottom:4 }}>Mensual</div>
             <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:32 }}>
-              <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.orange }}>€49</span>
+              <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.orange }}>€199</span>
               <span style={{ fontFamily:F, fontSize:'13px', color:C.textSec }}>/mes</span>
             </div>
             <div style={{ fontSize:'12px', color:C.textSec, lineHeight:'1.8', marginBottom:32, paddingBottom:32, borderBottom:`1px solid ${C.border2}` }}>
@@ -2339,16 +2339,16 @@ function Pricing() {
           {/* Annual Plan */}
           <Card accent={C.teal} sx={{ padding:40, position:'relative', background:`linear-gradient(135deg, ${C.card} 0%, ${C.card} 100%), linear-gradient(135deg, ${C.teal}08 0%, transparent 100%)` }}>
             <div style={{ position:'absolute', top:20, right:20 }}>
-              <Badge label='MÁS POPULAR · 2 MESES GRATIS' color={C.teal} bg={C.tealBg}/>
+              <Badge label='MÁS POPULAR · AHORRA 788€' color={C.teal} bg={C.tealBg}/>
             </div>
             <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>PLAN</div>
             <div style={{ fontFamily:F, fontSize:'28px', fontWeight:700, color:C.text, marginBottom:4 }}>Anual</div>
             <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:8 }}>
-              <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.teal }}>€420</span>
+              <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.teal }}>€1600</span>
               <span style={{ fontFamily:F, fontSize:'13px', color:C.textSec }}>/año</span>
             </div>
             <div style={{ fontFamily:F, fontSize:'11px', color:C.teal, marginBottom:32, fontWeight:700 }}>
-              € 35/mes (ahorra 2 meses)
+              € 133/mes (ahorra casi 4 meses)
             </div>
             <div style={{ fontSize:'12px', color:C.textSec, lineHeight:'1.8', marginBottom:32, paddingBottom:32, borderBottom:`1px solid ${C.border2}` }}>
               <div style={{ marginBottom:10 }}>✓ Acceso a todas las funciones</div>
