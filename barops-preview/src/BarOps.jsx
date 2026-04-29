@@ -1,0 +1,2504 @@
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis,
+  CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from 'recharts';
+import {
+  LayoutDashboard, Package, Users, Bot, BarChart2,
+  AlertTriangle, CheckCircle, Clock, TrendingUp, TrendingDown,
+  Send, HelpCircle, Plus, Bell, X, Zap,
+  ShoppingCart, ChevronDown, ChevronUp, UserCheck,
+  BookOpen, Trash2, CreditCard,
+} from 'lucide-react';
+
+// ─── TOKENS ───────────────────────────────────────────────────────────────────
+const C = {
+  bg:'#0A0A0A', card:'#111111', cardAlt:'#0D0D0D',
+  border:'#1A1A1A', border2:'#222222',
+  orange:'#FF6B35', teal:'#00D4AA', purple:'#7C3AED',
+  amber:'#F59E0B', red:'#EF4444',
+  text:'#E8E8E8', textSec:'#888888',
+  orangeBg:'#FF6B3515', tealBg:'#00D4AA15',
+  purpleBg:'#7C3AED15', amberBg:'#F59E0B15', redBg:'#EF444415',
+};
+const F = "'Courier New', Courier, monospace";
+
+// Fuzzy search para ingredientes
+const fuzzyMatch = (query, text) => {
+  const q = query.toLowerCase().trim();
+  const t = text.toLowerCase();
+  if (!q) return true;
+  let qIdx = 0, score = 0;
+  for (let i = 0; i < t.length && qIdx < q.length; i++) {
+    if (t[i] === q[qIdx]) { qIdx++; score += 10; }
+    else if (i > 0 && t[i-1] === ' ') score += 1;
+  }
+  return qIdx === q.length ? score : 0;
+};
+
+const filterIngredients = (query, ingredients) => {
+  if (!query.trim()) return ingredients;
+  return ingredients
+    .map(ing => ({ ...ing, score: Math.max(fuzzyMatch(query, ing.name), fuzzyMatch(query, ing.cat)) }))
+    .filter(ing => ing.score > 0)
+    .sort((a,b) => b.score - a.score);
+};
+
+// CSV parser para cócteles
+const parseCocktailsCSV = (raw) => {
+  const lines = raw.trim().split('\n').filter(l=>l.trim());
+  if (lines.length < 2) return { ok:false, items:[], errors:['CSV vacío'] };
+
+  const headerLine = lines[0];
+  const sep = headerLine.includes('\t') ? '\t' : headerLine.includes(';') ? ';' : ',';
+  const headers = headerLine.split(sep).map(h=>h.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''));
+
+  const mapping = {
+    nombre: ['nombre','name','titulo','cocktail','coctel','product','producto'],
+    descripcion: ['descripcion','description','notas','notes','ingredientes','ingredients','receta'],
+    precio: ['precio','price','venta','sale_price','pvp','cost','coste'],
+  };
+
+  const getCol = (k) => headers.findIndex(h => mapping[k].includes(h));
+  const colNombre = getCol('nombre'), colDesc = getCol('descripcion'), colPrecio = getCol('precio');
+
+  if (colNombre < 0 || colPrecio < 0) {
+    return { ok:false, items:[], errors:['Faltan columnas: nombre y precio son obligatorias'] };
+  }
+
+  const items = [], errors = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cells = lines[i].split(sep).map(c=>c.trim());
+    const nombre = cells[colNombre]?.trim();
+    const descripcion = colDesc >= 0 ? cells[colDesc]?.trim() || '' : '';
+    const precioStr = cells[colPrecio]?.trim().replace('€','').replace(',','.') || '';
+    const precio = parseFloat(precioStr);
+
+    if (!nombre) { errors.push(`Fila ${i+1}: falta nombre`); continue; }
+    if (!precio || isNaN(precio)) { errors.push(`Fila ${i+1}: precio inválido`); continue; }
+
+    items.push({
+      id: `custom_cocktail_${Date.now()}_${i}`,
+      name: nombre,
+      description: descripcion,
+      price: precio,
+      cost: 0,
+      margin: '0',
+      ingredients: [],
+    });
+  }
+
+  return { ok:true, items, errors };
+};
+
+// ─── AGENT SYSTEM PROMPT ──────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `Eres el Agente BarOps de Paradiso Cocktail Bar en Madrid. Eres un analista de negocio experto en hostelería.
+Tienes acceso en tiempo real a los datos del local. Respondes siempre en español, de forma directa y con datos concretos.
+Cuando calcules costes, usa los precios de proveedor exactos. Usa emojis con moderación solo cuando aporten claridad.
+Termina siempre con una recomendación accionable en 1 línea.
+
+== INVENTARIO ACTUAL ==
+- Aperol: 0.8 L → 1 día restante 🔴 CRÍTICO
+- Campari: 1.1 L → 2 días 🔴 CRÍTICO
+- Gin Hendrick's: 2.3 L → 3 días 🔴 CRÍTICO
+- Limones frescos: 28 ud → 4 días 🟡 MEDIO
+- Vermut Martini Rosso: 3.2 L → 12 días
+- Tequila Patrón Silver: 2.9 L → 14 días
+- Cointreau: 1.5 L → 13 días
+- Ron Diplomatico Reserva: 4.8 L → 16 días
+- Whisky Jameson: 5.6 L → 20 días
+- Champagne Moët: 18 bot → 15 días
+
+== PRECIOS PROVEEDOR (Eurocash Madrid) ==
+- Gin Hendrick's 70cl: €15.20 → 4cl = €0.87
+- Campari 1L: €14.90 → 3cl = €0.45
+- Vermut Martini Rosso 1L: €11.30 → 3cl = €0.34
+- Aperol 1L: €11.80 → 6cl = €0.71
+- Tequila Patrón Silver 70cl: €28.40 → 4.5cl = €1.83
+- Ron Diplomatico 70cl: €22.10 → 4cl = €1.26
+- Whisky Jameson 70cl: €17.90 → 4cl = €1.02
+- Cointreau 70cl: €18.60 → 2cl = €0.53
+- Prosecco Zardetto: €6.80/bot
+- Limones: €0.12/ud
+- Hielo operativo: €0.04/coctel
+- Gaseosa/soda: €0.08
+- Guarnición media: €0.09
+
+== RECETAS ESTÁNDAR Y COSTES REALES ==
+- Negroni: Hendricks 4cl + Campari 3cl + Martini 3cl + twist naranja + hielo = €1.78 → venta €12 → margen 85.2%
+- Aperol Spritz: Aperol 6cl + Prosecco 9cl + soda + naranja = €1.42 → venta €10 → margen 85.8%
+- Gin Tonic Hendricks: Hendricks 5cl + tónica premium + pepino = €1.34 → venta €11 → margen 87.8%
+- Old Fashioned: Jameson 6cl + Angostura + azúcar + naranja = €1.67 → venta €13 → margen 87.2%
+- Mojito: Ron Diplomatico 5cl + lime + menta + azúcar + soda = €1.54 → venta €9.50 → margen 83.8%
+- Margarita: Patrón 4.5cl + Cointreau 2cl + lime = €2.36 → venta €12 → margen 80.3%
+- Dry Martini: Hendricks 6cl + Martini 1cl + aceituna = €1.71 → venta €13 → margen 86.8%
+
+== STAFFING SEMANA ACTUAL ==
+Cubiertos: Carlos M. (hoy 18-02), Ana R. (hoy 20-04), Miguel F. (jue 19-01), Laura S. (vie 18-04), David K. (sáb 18-05), Carmen B. (dom 17-00)
+PENDIENTES: Mar 29 Abr 18-02 Bartender Senior, Mar 29 Abr 21-03 Coctelero Clásico, Vie 1 May 20-04 Barback, Sáb 2 May 20-05 Coctelero Clásico
+
+== RED DE TALENTO DISPONIBLE ==
+HOY: Carlos Mendoza ⭐4.9 €16/h, Ana Ruiz ⭐4.7 €14/h, David Kovacs ⭐4.9 €18/h, Rafa Moreno ⭐4.5 €9/h
+ESTE FINDE: Miguel Fernández ⭐4.8 €11/h, Laura Sánchez ⭐5.0 €19/h, Nora Iglesias ⭐4.8 €17/h
+
+== DATOS FINANCIEROS ==
+- Merma este mes: €710 (era €1.850/mes antes de BarOps en noviembre)
+- Ahorro acumulado 6 meses: €7.240
+- ROI BarOps este mes: 5.7x (€199 coste → €1.140 ahorro)
+- Ticket medio Paradiso: €28
+- Servicio medio finde: 85-110 personas`;
+
+// ─── DATA ─────────────────────────────────────────────────────────────────────
+const INVENTORY = [
+  { id:1,  name:"Aperol",               cat:"Aperitivo",    stock:"0.8 L",  pct:8,  weekly:"3.4 L", days:1,  cost:"€0.54", risk:"critical" },
+  { id:2,  name:"Campari",              cat:"Amaro",        stock:"1.1 L",  pct:11, weekly:"2.8 L", days:2,  cost:"€0.62", risk:"critical" },
+  { id:3,  name:"Gin Hendrick's",       cat:"Ginebra",      stock:"2.3 L",  pct:23, weekly:"4.2 L", days:3,  cost:"€0.87", risk:"critical" },
+  { id:4,  name:"Limones frescos",      cat:"Fruta fresca", stock:"28 ud",  pct:31, weekly:"45 ud", days:4,  cost:"€0.12", risk:"medium"   },
+  { id:5,  name:"Vermut Martini Rosso", cat:"Vermut",       stock:"3.2 L",  pct:43, weekly:"1.8 L", days:12, cost:"€0.45", risk:"medium"   },
+  { id:6,  name:"Tequila Patrón Silver",cat:"Tequila",      stock:"2.9 L",  pct:48, weekly:"1.4 L", days:14, cost:"€1.45", risk:"medium"   },
+  { id:7,  name:"Cointreau",            cat:"Triple Seco",  stock:"1.5 L",  pct:50, weekly:"0.8 L", days:13, cost:"€0.78", risk:"medium"   },
+  { id:8,  name:"Ron Diplomatico Rsva", cat:"Ron",          stock:"4.8 L",  pct:68, weekly:"2.1 L", days:16, cost:"€1.23", risk:"stable"   },
+  { id:9,  name:"Whisky Jameson",       cat:"Whisky",       stock:"5.6 L",  pct:75, weekly:"1.9 L", days:20, cost:"€0.98", risk:"stable"   },
+  { id:10, name:"Champagne Moët",       cat:"Espumoso",     stock:"18 bot", pct:90, weekly:"8 bot", days:15, cost:"€8.50", risk:"stable"   },
+];
+
+const OPEN_SHIFTS = [
+  { id:3, date:"Mar 29 Abr", time:"18:00 – 02:00", profile:"Bartender Senior",    status:"searching", cost:"€145", match:["Carlos Mendoza","David Kovacs"]   },
+  { id:4, date:"Mar 29 Abr", time:"21:00 – 03:00", profile:"Coctelero Clásico",   status:"urgent",    cost:"€136", match:["Carlos Mendoza","Laura Sánchez"]  },
+  { id:7, date:"Vie 1 May",  time:"20:00 – 04:00", profile:"Barback / Ayudante",  status:"searching", cost:"€72",  match:["Rafa Moreno"]                     },
+  { id:9, date:"Sáb 2 May",  time:"20:00 – 05:00", profile:"Coctelero Clásico",   status:"urgent",    cost:"€152", match:["Laura Sánchez","Carlos Mendoza"]  },
+];
+
+const COVERED_SHIFTS = [
+  { id:1, date:"Hoy, 28 Abr", time:"18:00 – 02:00", profile:"Bartender Coctelería", pro:"Carlos M.", cost:"€128", rating:4.9 },
+  { id:2, date:"Hoy, 28 Abr", time:"20:00 – 04:00", profile:"Camarero Sala",         pro:"Ana R.",    cost:"€96",  rating:4.7 },
+  { id:5, date:"Jue 30 Abr",  time:"19:00 – 01:00", profile:"Camarero Barras",       pro:"Miguel F.", cost:"€88",  rating:4.8 },
+  { id:6, date:"Vie 1 May",   time:"18:00 – 04:00", profile:"Bartender Coctelería",  pro:"Laura S.",  cost:"€152", rating:5.0 },
+  { id:8, date:"Sáb 2 May",   time:"18:00 – 05:00", profile:"Bartender Senior",      pro:"David K.",  cost:"€168", rating:4.9 },
+  { id:10,date:"Dom 3 May",   time:"17:00 – 00:00", profile:"Camarero Sala",          pro:"Carmen B.", cost:"€84",  rating:4.6 },
+];
+
+const TALENT = [
+  { id:1, name:"Carlos Mendoza",   ini:"CM", spec:"Coctelería Clásica", rating:4.9, rate:"€16/h", avail:"today",       tags:["Negroni","Old Fashioned","Gin Tonics"] },
+  { id:2, name:"Ana Ruiz",         ini:"AR", spec:"Mixología Creativa", rating:4.7, rate:"€14/h", avail:"today",       tags:["Mocktails","Bar Show","Premium"]       },
+  { id:5, name:"David Kovacs",     ini:"DK", spec:"Bartender Flair",    rating:4.9, rate:"€18/h", avail:"today",       tags:["Flair","Tropical","Espectáculo"]       },
+  { id:7, name:"Rafa Moreno",      ini:"RM", spec:"Barback Senior",     rating:4.5, rate:"€9/h",  avail:"today",       tags:["Mise en place","Soporte","Limpieza"]   },
+  { id:3, name:"Miguel Fernández", ini:"MF", spec:"Camarero de Sala",   rating:4.8, rate:"€11/h", avail:"weekend",     tags:["Vinos","Servicio mesa","TPV"]          },
+  { id:4, name:"Laura Sánchez",    ini:"LS", spec:"Head Bartender",     rating:5.0, rate:"€19/h", avail:"weekend",     tags:["Cartas","Formación","Cost control"]    },
+  { id:8, name:"Nora Iglesias",    ini:"NI", spec:"Sumiller",           rating:4.8, rate:"€17/h", avail:"weekend",     tags:["Vinos","Champagne","Maridaje"]         },
+  { id:6, name:"Carmen Blanco",    ini:"CB", spec:"Camarera de Sala",   rating:4.6, rate:"€10/h", avail:"unavailable", tags:["Idiomas","Eventos","Protocolo"]        },
+];
+
+const MERMA_DATA = [
+  { m:"Nov", antes:1850, despues:1850 },
+  { m:"Dic", antes:2100, despues:1620 },
+  { m:"Ene", antes:1950, despues:1380 },
+  { m:"Feb", antes:2050, despues:1120 },
+  { m:"Mar", antes:1900, despues:890  },
+  { m:"Abr", antes:2150, despues:710  },
+];
+const CAT_DATA = [
+  { n:"Ginebras",v:4850 },{ n:"Espumosos",v:3400 },{ n:"Rones",v:3200 },
+  { n:"Whisky",v:2800 }, { n:"Tequila",v:2100 }, { n:"Vermuts",v:1900 },
+  { n:"Aperitivos",v:1650 },{ n:"Misc",v:1200 },
+];
+const TOP_PRODUCTS = [
+  { name:"Gin Tonic Hendrick's", cat:"Combinado", cost:"€1.34",price:"€11.00",margin:"87.8%",units:521 },
+  { name:"Dry Martini",          cat:"Cóctel",    cost:"€1.71",price:"€13.00",margin:"86.8%",units:198 },
+  { name:"Old Fashioned",        cat:"Cóctel",    cost:"€1.67",price:"€13.00",margin:"87.2%",units:156 },
+  { name:"Negroni",              cat:"Cóctel",    cost:"€1.78",price:"€12.00",margin:"85.2%",units:312 },
+  { name:"Aperol Spritz",        cat:"Aperitivo", cost:"€1.42",price:"€10.00",margin:"85.8%",units:428 },
+  { name:"Mojito",               cat:"Cóctel",    cost:"€1.54",price:"€9.50", margin:"83.8%",units:384 },
+  { name:"Whisky Jameson Solo",  cat:"Destilado", cost:"€1.02",price:"€8.00", margin:"87.3%",units:267 },
+  { name:"Margarita",            cat:"Cóctel",    cost:"€2.36",price:"€12.00",margin:"80.3%",units:187 },
+  { name:"Cosmopolitan",         cat:"Cóctel",    cost:"€2.42",price:"€12.50",margin:"80.6%",units:143 },
+  { name:"Champagne Moët Copa",  cat:"Espumoso",  cost:"€8.50",price:"€18.00",margin:"52.8%",units:89  },
+];
+
+// ─── CARTA DATA ───────────────────────────────────────────────────────────────
+const INGREDIENTS_DB = [
+  // Ginebras
+  { id:'hendricks',    name:"Gin Hendrick's",         unit:'ml',  cpu:0.217, cat:'Ginebra'     },
+  { id:'tanqueray',    name:"Gin Tanqueray",           unit:'ml',  cpu:0.186, cat:'Ginebra'     },
+  { id:'bombay',       name:"Gin Bombay Sapphire",    unit:'ml',  cpu:0.162, cat:'Ginebra'     },
+  { id:'nordes',       name:"Gin Nordés",              unit:'ml',  cpu:0.228, cat:'Ginebra'     },
+  // Rones
+  { id:'ron_dip',      name:"Ron Diplomatico Rsva",   unit:'ml',  cpu:0.316, cat:'Ron'         },
+  { id:'ron_brugal',   name:"Ron Brugal Añejo",       unit:'ml',  cpu:0.198, cat:'Ron'         },
+  { id:'ron_zacapa',   name:"Ron Zacapa 23",          unit:'ml',  cpu:0.412, cat:'Ron'         },
+  // Tequila & Mezcal
+  { id:'patron',       name:"Tequila Patrón Silver",  unit:'ml',  cpu:0.406, cat:'Tequila'     },
+  { id:'jimador',      name:"Tequila El Jimador",     unit:'ml',  cpu:0.198, cat:'Tequila'     },
+  { id:'mezcal_del',   name:"Mezcal Del Maguey",      unit:'ml',  cpu:0.486, cat:'Mezcal'      },
+  // Whisky
+  { id:'jameson',      name:"Whisky Jameson",         unit:'ml',  cpu:0.256, cat:'Whisky'      },
+  { id:'monkey',       name:"Monkey Shoulder",        unit:'ml',  cpu:0.282, cat:'Whisky'      },
+  { id:'bulleit_rye',  name:"Bulleit Rye",            unit:'ml',  cpu:0.312, cat:'Whisky'      },
+  // Aperitivos & Amari
+  { id:'campari',      name:"Campari",                 unit:'ml',  cpu:0.149, cat:'Amaro'       },
+  { id:'aperol',       name:"Aperol",                  unit:'ml',  cpu:0.118, cat:'Aperitivo'   },
+  { id:'cynar',        name:"Cynar",                   unit:'ml',  cpu:0.168, cat:'Amaro'       },
+  { id:'fernet',       name:"Fernet Branca",           unit:'ml',  cpu:0.182, cat:'Amaro'       },
+  // Vermuts
+  { id:'martini_r',    name:"Vermut Martini Rosso",   unit:'ml',  cpu:0.113, cat:'Vermut'      },
+  { id:'martini_b',    name:"Vermut Martini Bianco",  unit:'ml',  cpu:0.108, cat:'Vermut'      },
+  { id:'noilly',       name:"Noilly Prat Dry",        unit:'ml',  cpu:0.138, cat:'Vermut'      },
+  // Licores
+  { id:'cointreau',    name:"Cointreau",                unit:'ml',  cpu:0.266, cat:'Triple Seco' },
+  { id:'licor43',      name:"Licor 43",                 unit:'ml',  cpu:0.192, cat:'Licor'       },
+  { id:'kahlua',       name:"Kahlúa",                   unit:'ml',  cpu:0.195, cat:'Licor'       },
+  { id:'baileys',      name:"Baileys",                  unit:'ml',  cpu:0.178, cat:'Crema'       },
+  { id:'amaretto',     name:"Amaretto Disaronno",      unit:'ml',  cpu:0.213, cat:'Licor'       },
+  { id:'st_germain',   name:"St-Germain Elderflower",  unit:'ml',  cpu:0.312, cat:'Licor'       },
+  { id:'chartreuse_v', name:"Chartreuse Verde",        unit:'ml',  cpu:0.428, cat:'Licor'       },
+  // Espumosos
+  { id:'prosecco',     name:"Prosecco Zardetto",      unit:'ml',  cpu:0.091, cat:'Espumoso'    },
+  { id:'cava',         name:"Cava Brut",               unit:'ml',  cpu:0.062, cat:'Espumoso'    },
+  // Mixers
+  { id:'tonica_prem',  name:"Tónica Premium (25cl)",  unit:'ml',  cpu:0.025, cat:'Mixer'       },
+  { id:'ginger_beer',  name:"Ginger Beer",             unit:'ml',  cpu:0.028, cat:'Mixer'       },
+  { id:'soda',         name:"Soda",                    unit:'ml',  cpu:0.008, cat:'Mixer'       },
+  { id:'cola',         name:"Coca-Cola",                unit:'ml',  cpu:0.012, cat:'Mixer'       },
+  { id:'agua_coco',    name:"Agua de coco",            unit:'ml',  cpu:0.034, cat:'Mixer'       },
+  // Zumos frescos
+  { id:'zumo_limon',   name:"Zumo limón fresco",      unit:'ml',  cpu:0.018, cat:'Fresco'      },
+  { id:'zumo_lima',    name:"Zumo lima fresco",        unit:'ml',  cpu:0.021, cat:'Fresco'      },
+  { id:'zumo_naranja', name:"Zumo naranja fresco",     unit:'ml',  cpu:0.015, cat:'Fresco'      },
+  { id:'zumo_pina',    name:"Zumo piña natural",       unit:'ml',  cpu:0.022, cat:'Fresco'      },
+  { id:'zumo_cranb',   name:"Zumo cranberry",          unit:'ml',  cpu:0.019, cat:'Zumo'        },
+  { id:'zumo_frutos',  name:"Zumo frutos rojos",      unit:'ml',  cpu:0.026, cat:'Zumo'        },
+  // Siropes
+  { id:'sirope_az',    name:"Sirope de azúcar",        unit:'ml',  cpu:0.012, cat:'Sirope'      },
+  { id:'grenadine',    name:"Granadina",                unit:'ml',  cpu:0.016, cat:'Sirope'      },
+  { id:'orgeat',       name:"Orgeat / Almendra",       unit:'ml',  cpu:0.028, cat:'Sirope'      },
+  { id:'sirope_mango', name:"Sirope de mango",         unit:'ml',  cpu:0.024, cat:'Sirope'      },
+  { id:'sirope_vainilla',name:"Sirope de vainilla",    unit:'ml',  cpu:0.022, cat:'Sirope'      },
+  { id:'miel',         name:"Sirope de miel",          unit:'ml',  cpu:0.032, cat:'Sirope'      },
+  // Guarniciones
+  { id:'garn_limon',   name:"Limón (twist/rodaja)",    unit:'ud',  cpu:0.12,  cat:'Guarnición'  },
+  { id:'garn_naranja', name:"Naranja (twist/media)",   unit:'ud',  cpu:0.09,  cat:'Guarnición'  },
+  { id:'garn_lima',    name:"Lima (twist/rodaja)",     unit:'ud',  cpu:0.14,  cat:'Guarnición'  },
+  { id:'menta',        name:"Menta fresca (rama)",     unit:'ud',  cpu:0.08,  cat:'Guarnición'  },
+  { id:'oliva',        name:"Aceituna cocktail",       unit:'ud',  cpu:0.05,  cat:'Guarnición'  },
+  { id:'cereza',       name:"Cereza marrasquino",      unit:'ud',  cpu:0.12,  cat:'Guarnición'  },
+  { id:'pepino',       name:"Pepino (rodaja)",         unit:'ud',  cpu:0.06,  cat:'Guarnición'  },
+  // Operativos
+  { id:'hielo',        name:"Hielo (coste operativo)", unit:'uso', cpu:0.04,  cat:'Operativo'   },
+  { id:'sal_borde',    name:"Sal / azúcar borde",      unit:'uso', cpu:0.03,  cat:'Operativo'   },
+  { id:'clara_huevo',  name:"Clara de huevo",          unit:'uso', cpu:0.08,  cat:'Operativo'   },
+];
+
+const CLASSIC_COCKTAILS_DATA = [
+  { id:'negroni',      name:"Negroni",              cost:1.78, price:12.00, margin:"85.2", description:"Hendrick's · Campari · Martini Rosso",        ings:[{n:"Gin Hendrick's 4 cl"},{n:"Campari 3 cl"},{n:"Vermut Martini Rosso 3 cl"},{n:"Twist naranja"},{n:"Hielo"}] },
+  { id:'spritz',       name:"Aperol Spritz",         cost:1.42, price:10.00, margin:"85.8", description:"Aperol · Prosecco · Soda · Naranja",          ings:[{n:"Aperol 6 cl"},{n:"Prosecco 9 cl"},{n:"Soda 2 cl"},{n:"Rodaja naranja"}] },
+  { id:'gintonic',     name:"Gin Tonic Hendrick's",  cost:1.34, price:11.00, margin:"87.8", description:"Hendrick's · Tónica Premium · Pepino",        ings:[{n:"Gin Hendrick's 5 cl"},{n:"Tónica Premium 15 cl"},{n:"Pepino (rodaja)"}] },
+  { id:'old_fashioned',name:"Old Fashioned",         cost:1.67, price:13.00, margin:"87.2", description:"Jameson · Angostura · Azúcar · Naranja",      ings:[{n:"Whisky Jameson 6 cl"},{n:"Angostura 2 dashes"},{n:"Azúcar (terrón)"},{n:"Twist naranja"},{n:"Hielo"}] },
+  { id:'mojito',       name:"Mojito",                cost:1.54, price:9.50,  margin:"83.8", description:"Ron Diplomatico · Lima · Menta · Soda",       ings:[{n:"Ron Diplomatico 5 cl"},{n:"Zumo lima 2 cl"},{n:"Menta fresca"},{n:"Sirope azúcar 1 cl"},{n:"Soda 8 cl"}] },
+  { id:'margarita',    name:"Margarita",              cost:2.36, price:12.00, margin:"80.3", description:"Patrón Silver · Cointreau · Lima · Sal",      ings:[{n:"Patrón Silver 4.5 cl"},{n:"Cointreau 2 cl"},{n:"Zumo lima 2 cl"},{n:"Sal borde"}] },
+  { id:'dry_martini',  name:"Dry Martini",           cost:1.71, price:13.00, margin:"86.8", description:"Hendrick's · Vermut Bianco · Aceituna",       ings:[{n:"Gin Hendrick's 6 cl"},{n:"Vermut Martini Bianco 1 cl"},{n:"Aceituna"},{n:"Hielo"}] },
+  { id:'cosmo',        name:"Cosmopolitan",           cost:2.42, price:12.50, margin:"80.6", description:"Patrón Silver · Cointreau · Cranberry · Lima",ings:[{n:"Patrón Silver 4 cl"},{n:"Cointreau 1.5 cl"},{n:"Zumo cranberry 3 cl"},{n:"Zumo lima 1.5 cl"}] },
+];
+
+const marginColor = (m) => {
+  const n = parseFloat(m);
+  return n >= 80 ? C.teal : n >= 65 ? C.amber : '#EF4444';
+};
+
+const INITIAL_CHAT = [
+  { id:1, role:"user",  time:"14:23", text:"¿Qué me va a faltar este fin de semana?" },
+  {
+    id:2, role:"agent", time:"14:23",
+    text:`Analizado tu historial de 8 semanas + reservas del finde. 3 críticos y 2 preventivos:
+
+🔴 CRÍTICO — Aperol (0.8 L): consumo estimado 6.2 L. Sin stock el viernes a las 22h
+🔴 CRÍTICO — Campari (1.1 L): estimado 4.8 L. Sin stock sábado al mediodía
+🔴 CRÍTICO — Gin Hendrick's (2.3 L): tres grupos con cumpleaños el sábado, estimado 7.4 L
+🟡 PREVENTIVO — Limones frescos (28 ud): necesitas mínimo 85 ud viernes + sábado
+🟡 PREVENTIVO — Vermut Martini Rosso: ajustado si el Negroni sale como el sábado pasado
+
+→ Haz el pedido antes del jueves en Eurocash Madrid (Vallecas). ¿Genero la lista completa?`,
+  },
+  { id:3, role:"user",  time:"14:25", text:"¿Cuánto me cuesta de verdad un Negroni?" },
+  {
+    id:4, role:"agent", time:"14:25",
+    text:`Calculado con tus precios de proveedor actuales:
+
+NEGRONI — Desglose coste real:
+  • Gin Hendrick's 4 cl  →  €0.87
+  • Campari 3 cl          →  €0.45
+  • Martini Rosso 3 cl    →  €0.34
+  • Naranja / twist       →  €0.08
+  • Hielo rotatorio       →  €0.04
+
+COSTE TOTAL → €1.78 | PRECIO CARTA → €12.00 | MARGEN → 85.2%
+
+⚡ Tu teórico era €1.61. La diferencia (+€0.17) es merma en cítricos y derrame en Campari. ~€53/mes de pérdida silenciosa solo en Negronis.`,
+  },
+];
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+function getNow() {
+  return new Date().toLocaleTimeString('es-ES',{ hour:'2-digit', minute:'2-digit' });
+}
+
+async function callClaude(history) {
+  const res = await fetch('/api/anthropic/v1/messages', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens:1024,
+      system: SYSTEM_PROMPT,
+      messages: history.map(m=>({ role:m.role==='agent'?'assistant':'user', content:m.text })),
+    }),
+  });
+  if (!res.ok) {
+    if (res.status===401||res.status===403) throw new Error('API_KEY_MISSING');
+    const err = await res.json().catch(()=>({}));
+    throw new Error(err.error?.message||`HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.content[0].text;
+}
+
+// ─── APP CONTEXT ──────────────────────────────────────────────────────────────
+const AppCtx = React.createContext(null);
+const useApp = () => React.useContext(AppCtx);
+
+// ─── CSV IMPORT ───────────────────────────────────────────────────────────────
+const TEMPLATE_CSV = `nombre,categoria,stock,unidad,precio,volumen_cl
+Gin Hendrick's,Ginebra,3,bot,15.20,70
+Campari,Amaro,2,bot,14.90,100
+Ron Diplomatico Reserva,Ron,5,bot,22.10,70
+Limones frescos,Fruta fresca,80,ud,0.12,
+Tónica Premium 25cl,Mixer,24,ud,0.65,
+Sirope de azúcar,Sirope,6,bot,4.80,100
+`;
+
+function parseCSV(raw) {
+  const lines = raw.trim().split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return { ok:false, error:'Necesitas al menos una cabecera y una fila de datos.' };
+
+  const sep = lines[0].includes(';') ? ';' : lines[0].includes('\t') ? '\t' : ',';
+  const norm = s => s.trim().toLowerCase().replace(/['"]/g,'').normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const headers = lines[0].split(sep).map(norm);
+
+  const col = (...keys) => { for (const k of keys) { const i=headers.indexOf(k); if(i>=0) return i; } return -1; };
+  const nameIdx  = col('nombre','producto','name','descripcion','articulo');
+  const catIdx   = col('categoria','categoría','category','tipo','familia','seccion');
+  const stockIdx = col('stock','cantidad','existencias','qty','stock_actual','uds_stock');
+  const unitIdx  = col('unidad','unit','um','formato','tipo_unidad');
+  const priceIdx = col('precio','coste','cost','precio_bot','precio_botella','precio_unitario','precio_compra','pvp_compra','precio_coste');
+  const volIdx   = col('volumen','volumen_cl','cl','capacidad','contenido','vol_cl','ml');
+
+  if (nameIdx < 0) return { ok:false, error:'Columna "nombre" o "producto" no encontrada. Revisa la cabecera.' };
+  if (priceIdx < 0) return { ok:false, error:'Columna "precio" o "coste" no encontrada. Revisa la cabecera.' };
+
+  const results = [], errors = [];
+  for (let r = 1; r < lines.length; r++) {
+    const cols = lines[r].split(sep).map(c => c.trim().replace(/^["']|["']$/g,''));
+    const name = cols[nameIdx]; if (!name) continue;
+    const cat = catIdx>=0 ? cols[catIdx] : 'Importado';
+    const priceRaw = parseFloat((cols[priceIdx]||'0').replace(',','.').replace(/[€$\s]/g,'')) || 0;
+    const stockRaw = stockIdx>=0 ? cols[stockIdx] : '0';
+    const unitRaw  = (unitIdx>=0 ? cols[unitIdx] : 'ud').toLowerCase().trim();
+    const volRaw   = volIdx>=0 ? parseFloat((cols[volIdx]||'0').replace(',','.')) : 0;
+
+    let cpu, unit, stockStr, pct, days;
+    const stockQty = parseFloat(stockRaw.replace(',','.')) || 0;
+
+    if (['bot','botella','botellas','bottle','bottles'].includes(unitRaw)) {
+      const vol = volRaw>0 ? volRaw : 70;
+      unit='cl'; cpu=priceRaw/vol;
+      stockStr=`${stockQty} bot`; pct=Math.min(100,Math.round(stockQty*12)); days=Math.min(90,Math.round(stockQty*6));
+    } else if (['l','litro','litros','liter','liters'].includes(unitRaw)) {
+      unit='cl'; cpu=priceRaw/100;
+      stockStr=`${stockQty} L`; pct=Math.min(100,Math.round(stockQty*15)); days=Math.min(90,Math.round(stockQty*8));
+    } else if (unitRaw==='cl') {
+      const vol=volRaw>0?volRaw:100;
+      unit='cl'; cpu=priceRaw/vol;
+      stockStr=`${stockQty} cl`; pct=Math.min(100,Math.round(stockQty/2)); days=Math.min(90,Math.round(stockQty/10));
+    } else if (['kg','kilo','kilos'].includes(unitRaw)) {
+      unit='ud'; cpu=priceRaw/1000;
+      stockStr=`${stockQty} kg`; pct=Math.min(100,Math.round(stockQty*10)); days=Math.min(90,Math.round(stockQty*5));
+    } else {
+      unit='ud'; cpu=priceRaw;
+      stockStr=`${stockQty} ud`; pct=Math.min(100,Math.round(stockQty*3)); days=Math.min(90,Math.round(stockQty*2));
+    }
+
+    if (!priceRaw || cpu<=0) { errors.push(`Fila ${r+1}: precio inválido para "${name}"`); continue; }
+
+    const risk = days<=3?'critical':days<=7?'medium':'stable';
+    const safeId = name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'_').slice(0,28);
+    results.push({
+      id:`imp_${safeId}_${r}`,
+      name, cat, unit,
+      cpu:Math.round(cpu*10000)/10000,
+      stock:stockStr, pct, days, risk,
+      weekly:'', cost:`€${cpu.toFixed(3)}`,
+    });
+  }
+  return { ok:true, items:results, errors };
+}
+
+// ─── ATOMS ────────────────────────────────────────────────────────────────────
+function Badge({ label, color, bg }) {
+  return (
+    <span style={{
+      display:'inline-flex', alignItems:'center', padding:'3px 8px',
+      borderRadius:'2px', fontSize:'10px', fontFamily:F,
+      letterSpacing:'1.5px', fontWeight:700,
+      color, background:bg, border:`1px solid ${color}44`, whiteSpace:'nowrap',
+    }}>
+      {label}
+    </span>
+  );
+}
+function RiskBadge({ risk }) {
+  const M = { critical:{label:'CRÍTICO',color:'#EF4444',bg:'#EF444415'}, medium:{label:'MEDIO',color:C.amber,bg:C.amberBg}, stable:{label:'ESTABLE',color:C.teal,bg:C.tealBg} };
+  const m = M[risk]||M.stable;
+  return <Badge label={m.label} color={m.color} bg={m.bg}/>;
+}
+function ShiftBadge({ status }) {
+  const M = { covered:{label:'CUBIERTO',color:C.teal,bg:C.tealBg}, searching:{label:'BUSCANDO',color:C.amber,bg:C.amberBg}, urgent:{label:'URGENTE',color:'#EF4444',bg:'#EF444415'} };
+  const m = M[status]||M.searching;
+  return <Badge label={m.label} color={m.color} bg={m.bg}/>;
+}
+function AvailBadge({ avail }) {
+  const M = { today:{label:'DISPONIBLE HOY',color:C.teal,bg:C.tealBg}, weekend:{label:'ESTE FINDE',color:C.amber,bg:C.amberBg}, unavailable:{label:'NO DISPONIBLE',color:C.textSec,bg:'#88888815'} };
+  const m = M[avail]||M.unavailable;
+  return <Badge label={m.label} color={m.color} bg={m.bg}/>;
+}
+function StockBar({ pct }) {
+  const color = pct<20?'#EF4444':pct<45?C.amber:C.teal;
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+      <div style={{ width:72, height:5, background:'#2a2a2a', borderRadius:3, overflow:'hidden' }}>
+        <div style={{ width:`${pct}%`, height:'100%', background:color, borderRadius:3 }}/>
+      </div>
+      <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec, minWidth:28 }}>{pct}%</span>
+    </div>
+  );
+}
+function Stars({ rating }) {
+  return (
+    <span style={{ fontFamily:F, fontSize:'12px' }}>
+      <span style={{ color:C.amber }}>{'★'.repeat(Math.floor(rating))}</span>
+      <span style={{ color:'#2a2a2a' }}>{'★'.repeat(5-Math.floor(rating))}</span>
+      <span style={{ color:C.textSec, marginLeft:5, fontSize:'11px' }}>{rating}</span>
+    </span>
+  );
+}
+function Avatar({ ini, size=44 }) {
+  return (
+    <div style={{
+      width:size, height:size, borderRadius:4, flexShrink:0,
+      background:`linear-gradient(135deg,${C.orange}22,${C.purple}22)`,
+      border:`1px solid ${C.orange}44`,
+      display:'flex', alignItems:'center', justifyContent:'center',
+      fontFamily:F, fontSize:size>36?'13px':'11px', fontWeight:700, color:C.orange, letterSpacing:'1px',
+    }}>
+      {ini}
+    </div>
+  );
+}
+function Toast({ msg, onClose }) {
+  useEffect(()=>{ const t=setTimeout(onClose,3200); return ()=>clearTimeout(t); },[onClose]);
+  return (
+    <div style={{
+      position:'fixed', bottom:28, right:28, zIndex:9999,
+      background:C.teal, color:'#000', padding:'12px 20px',
+      borderRadius:4, fontFamily:F, fontSize:'12px', letterSpacing:'1.5px', fontWeight:700,
+      boxShadow:`0 4px 28px ${C.teal}55`,
+      display:'flex', alignItems:'center', gap:12,
+    }}>
+      <CheckCircle size={15}/>{msg}
+      <X size={13} style={{ cursor:'pointer', opacity:.7 }} onClick={onClose}/>
+    </div>
+  );
+}
+function Btn({ children, onClick, variant='primary', disabled=false, sx={} }) {
+  const V = {
+    primary: { background:C.orange,   color:'#000',       border:'none'                        },
+    outline: { background:'transparent',color:C.orange,   border:`1px solid ${C.orange}66`     },
+    ghost:   { background:'transparent',color:C.textSec,  border:`1px solid ${C.border2}`      },
+    teal:    { background:C.teal,      color:'#000',       border:'none'                        },
+    danger:  { background:'transparent',color:'#EF4444',  border:`1px solid #EF444444`         },
+    purple:  { background:C.purpleBg,  color:C.purple,     border:`1px solid ${C.purple}44`    },
+  };
+  return (
+    <button onClick={disabled?undefined:onClick} style={{
+      fontFamily:F, fontWeight:700, letterSpacing:'1.5px', borderRadius:2,
+      cursor:disabled?'default':'pointer', fontSize:'10px', padding:'7px 14px',
+      display:'inline-flex', alignItems:'center', gap:6,
+      opacity:disabled?.4:1, transition:'filter 0.15s',
+      ...V[variant], ...sx,
+    }}>
+      {children}
+    </button>
+  );
+}
+function Card({ children, accent, sx={}, ...props }) {
+  return (
+    <div style={{
+      background:C.card, border:`1px solid ${accent?accent+'33':C.border2}`,
+      borderRadius:4, fontFamily:F, ...sx,
+    }} {...props}>
+      {children}
+    </div>
+  );
+}
+function SLabel({ label, color=C.orange, icon:Icon }) {
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
+      {Icon&&<Icon size={13} color={color}/>}
+      <span style={{ fontFamily:F, fontSize:'11px', color, letterSpacing:'3px', fontWeight:700 }}>{label}</span>
+    </div>
+  );
+}
+function TypingDots() {
+  const [d,setD] = useState(0);
+  useEffect(()=>{ const t=setInterval(()=>setD(p=>(p+1)%4),380); return ()=>clearInterval(t); },[]);
+  return <span style={{ fontFamily:F, fontSize:'20px', color:C.teal, letterSpacing:6 }}>{'●'.repeat(d+1)}{'○'.repeat(3-d)}</span>;
+}
+
+// ─── SIDEBAR ──────────────────────────────────────────────────────────────────
+function Sidebar({ active, setActive }) {
+  const [mobile, setMobile] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => setMobile(window.innerWidth < 1024);
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const NAV = [
+    { id:'dashboard',  Icon:LayoutDashboard, label:'DASHBOARD'  },
+    { id:'inventario', Icon:Package,         label:'INVENTARIO' },
+    { id:'staffing',   Icon:Users,           label:'STAFFING'   },
+    { id:'agente',     Icon:Bot,             label:'AGENTE IA'  },
+    { id:'analytics',  Icon:BarChart2,       label:'ANALYTICS'  },
+    { id:'carta',      Icon:BookOpen,        label:'CARTA'      },
+    { id:'pricing',    Icon:CreditCard,      label:'BILLING'    },
+  ];
+
+  const handleNavClick = (id) => {
+    setActive(id);
+    if (mobile) setSidebarOpen(false);
+  };
+
+  const sidebarContent = (
+    <>
+      <div style={{ padding:'24px 22px 20px', borderBottom:`1px solid ${C.border2}` }}>
+        <div style={{ fontFamily:F, fontSize:'24px', fontWeight:700, color:C.orange, letterSpacing:'7px', lineHeight:1 }}>BAROPS</div>
+        <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'3px', marginTop:5 }}>SISTEMA OPERATIVO</div>
+      </div>
+      <div style={{ padding:'14px 22px 16px', borderBottom:`1px solid ${C.border}` }}>
+        <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>LOCAL</div>
+        <div style={{ fontFamily:F, fontSize:'13px', color:C.text, lineHeight:'1.35' }}>Paradiso Cocktail Bar</div>
+        <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:8 }}>
+          <div style={{ width:7, height:7, borderRadius:'50%', background:C.teal, boxShadow:`0 0 8px ${C.teal}` }}/>
+          <span style={{ fontFamily:F, fontSize:'9px', color:C.teal, letterSpacing:'1.5px' }}>SISTEMA ACTIVO</span>
+        </div>
+      </div>
+      <nav style={{ flex:1, padding:'10px 0' }}>
+        {NAV.map(({ id,Icon,label }) => {
+          const on = active===id;
+          return (
+            <div key={id} onClick={()=>handleNavClick(id)} style={{
+              display:'flex', alignItems:'center', gap:12, padding:'12px 22px', cursor:'pointer',
+              background:on?`${C.orange}12`:'transparent',
+              borderLeft:on?`2px solid ${C.orange}`:'2px solid transparent',
+              transition:'all 0.12s',
+            }}>
+              <Icon size={14} color={on?C.orange:C.textSec}/>
+              <span style={{ fontFamily:F, fontSize:'11px', letterSpacing:'2.5px', color:on?C.orange:C.textSec, fontWeight:on?700:400 }}>
+                {label}
+              </span>
+            </div>
+          );
+        })}
+      </nav>
+      <div style={{ padding:'16px 22px', borderTop:`1px solid ${C.border2}` }}>
+        {(() => {
+          const sub = localStorage.getItem('barops_subscription') ? JSON.parse(localStorage.getItem('barops_subscription')) : null;
+          const bg = sub?.status==='active'?C.purpleBg:C.tealBg;
+          const color = sub?.status==='active'?C.purple:C.teal;
+          const label = sub?.status==='active'?'ACTIVO':'TRIAL';
+          return (
+            <div style={{ padding:'10px 14px', background:bg, border:`1px solid ${color}44`, borderRadius:4, marginBottom:12, cursor:'pointer' }} onClick={() => setActive('pricing')}>
+              <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px' }}>PLAN ACTUAL</div>
+              <div style={{ fontFamily:F, fontSize:'16px', color, letterSpacing:'4px', fontWeight:700, marginTop:3 }}>PRO</div>
+              <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, marginTop:2 }}>{label}{sub?' · 14 días':''}</div>
+            </div>
+          );
+        })()}
+        <div style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', padding:'4px 0' }}>
+          <HelpCircle size={12} color={C.textSec}/>
+          <span style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px' }}>AYUDA & SOPORTE</span>
+        </div>
+      </div>
+    </>
+  );
+
+  if (mobile) {
+    return (
+      <>
+        <div style={{ position:'fixed', top:0, left:0, right:0, height:60, background:C.cardAlt, borderBottom:`1px solid ${C.border2}`, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 20px', zIndex:1000 }}>
+          <button onClick={()=>setSidebarOpen(!sidebarOpen)} style={{ background:'none', border:'none', cursor:'pointer', color:C.orange, display:'flex', alignItems:'center', justifyContent:'center' }}>
+            {sidebarOpen ? <X size={20}/> : <ChevronDown size={20} style={{transform:'rotate(-90deg)'}}/>}
+          </button>
+          <div style={{ fontFamily:F, fontSize:'16px', fontWeight:700, color:C.orange, letterSpacing:'4px' }}>BAROPS</div>
+          <div style={{ width:20 }}/>
+        </div>
+        {sidebarOpen && (
+          <>
+            <div onClick={()=>setSidebarOpen(false)} style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.5)', zIndex:999 }}/>
+            <div style={{ position:'fixed', top:60, left:0, width:224, maxHeight:'calc(100vh - 60px)', background:C.cardAlt, borderRight:`1px solid ${C.border2}`, display:'flex', flexDirection:'column', overflowY:'auto', zIndex:1001 }}>
+              {sidebarContent}
+            </div>
+          </>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div style={{ width:224, minHeight:'100vh', background:C.cardAlt, borderRight:`1px solid ${C.border2}`, display:'flex', flexDirection:'column', flexShrink:0 }}>
+      {sidebarContent}
+    </div>
+  );
+}
+
+// ─── SCREEN 1: DASHBOARD ──────────────────────────────────────────────────────
+function Dashboard() {
+  const [toast, setToast] = useState(null);
+  const [chatInput, setChatInput] = useState('');
+  const [staffingOpen, setStaffingOpen] = useState(false);
+  const KPIS = [
+    { label:'MERMA ESTIMADA MES', value:'€710',   sub:'−66% vs nov. 2025',  color:C.teal,   Icon:TrendingDown, bg:C.tealBg    },
+    { label:'STOCK EN RIESGO',    value:'3 REF.',  sub:'Nivel: CRÍTICO',      color:'#EF4444',Icon:AlertTriangle,bg:'#EF444415' },
+    { label:'TURNOS CUBIERTOS',   value:'7 / 10',  sub:'70% de cobertura',   color:C.orange, Icon:CheckCircle,  bg:C.orangeBg  },
+    { label:'AHORRO GENERADO',    value:'€1.140',  sub:'ROI: 5.7× este mes', color:C.amber,  Icon:TrendingUp,   bg:C.amberBg   },
+  ];
+  const CHIPS = ['¿Qué me va a faltar este finde?','¿Cuánto me cuesta un Negroni real?','Necesito un bartender mañana'];
+  const alertItems = INVENTORY.filter(i=>i.risk!=='stable');
+  const dashShifts = [...OPEN_SHIFTS.slice(0,2), ...COVERED_SHIFTS.slice(0,4)];
+
+  return (
+    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
+      {toast&&<Toast msg={toast} onClose={()=>setToast(null)}/>}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:28 }}>
+        <div>
+          <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>DASHBOARD</h1>
+          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Paradiso Cocktail Bar — Lunes, 28 de Abril de 2026</p>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <Bell size={15} color={C.textSec} style={{ cursor:'pointer' }}/>
+          <div style={{ padding:'6px 14px', background:C.tealBg, border:`1px solid ${C.teal}44`, borderRadius:2, fontFamily:F, fontSize:'9px', color:C.teal, letterSpacing:'2px', fontWeight:700 }}>
+            ● SISTEMA ACTIVO
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
+        {KPIS.map(({ label,value,sub,color,Icon,bg },i)=>(
+          <Card key={i} accent={color} sx={{ padding:20, background:bg }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+              <div>
+                <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>{label}</div>
+                <div style={{ fontSize:'30px', color, fontWeight:700, letterSpacing:'1px', lineHeight:1 }}>{value}</div>
+                <div style={{ fontSize:'11px', color:C.textSec, marginTop:8 }}>{sub}</div>
+              </div>
+              <Icon size={22} color={color} style={{ opacity:.55 }}/>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:staffingOpen?'1fr 1fr':'1fr', gap:14, marginBottom:16, transition:'all 0.3s' }}>
+        <Card sx={{ padding:20 }}>
+          <SLabel label="ALERTAS DE INVENTARIO" color={C.orange} icon={AlertTriangle}/>
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {alertItems.map(item=>(
+              <div key={item.id} style={{
+                display:'flex', alignItems:'center', justifyContent:'space-between',
+                padding:'10px 12px', background:C.cardAlt,
+                border:`1px solid ${item.risk==='critical'?'#EF444433':C.amber+'33'}`, borderRadius:3,
+              }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:'13px', color:C.text, fontWeight:700, marginBottom:3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.name}</div>
+                  <div style={{ display:'flex', gap:10 }}>
+                    <span style={{ fontSize:'11px', color:C.textSec }}>Stock: {item.stock}</span>
+                    <span style={{ fontSize:'11px', color:item.days<=3?'#EF4444':C.amber, fontWeight:700 }}>{item.days}d restantes</span>
+                  </div>
+                </div>
+                <div style={{ display:'flex', gap:8, alignItems:'center', marginLeft:10 }}>
+                  <RiskBadge risk={item.risk}/>
+                  <Btn onClick={()=>setToast(`Pedido de ${item.name} enviado al proveedor`)}>PEDIR YA</Btn>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        {staffingOpen&&(
+        <Card sx={{ padding:20 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+            <SLabel label="TURNOS ACTIVOS" color={C.teal} icon={Clock} style={{margin:0}}/>
+            <button onClick={()=>setStaffingOpen(false)} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec, display:'flex' }}>
+              <X size={16}/>
+            </button>
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {dashShifts.map(s=>(
+              <div key={s.id} style={{
+                display:'flex', alignItems:'center', justifyContent:'space-between',
+                padding:'10px 12px', background:C.cardAlt,
+                border:`1px solid ${s.status==='urgent'?'#EF444433':s.status==='searching'?C.amber+'33':C.border}`,
+                borderRadius:3,
+              }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:'11px', color:C.textSec, marginBottom:2 }}>{s.date} · {s.time}</div>
+                  <div style={{ fontSize:'13px', color:C.text, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.profile}</div>
+                  {s.pro&&<div style={{ fontSize:'11px', color:C.teal, marginTop:2 }}>→ {s.pro}</div>}
+                </div>
+                <ShiftBadge status={s.status}/>
+              </div>
+            ))}
+          </div>
+        </Card>
+        )}
+
+        {!staffingOpen&&(
+        <Card sx={{ padding:20, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:200, cursor:'pointer' }} onClick={()=>setStaffingOpen(true)}>
+          <Clock size={40} color={C.teal} style={{ opacity:0.5, marginBottom:12 }}/>
+          <div style={{ fontSize:'11px', color:C.textSec, letterSpacing:'2px', marginBottom:8, textAlign:'center' }}>GESTIÓN DE TURNOS</div>
+          <div style={{ fontSize:'13px', color:C.teal, fontWeight:700, letterSpacing:'1px' }}>7 / 10 CUBIERTOS</div>
+          <div style={{ fontSize:'10px', color:C.textSec, marginTop:8, textAlign:'center' }}>Haz click para expandir y<br/>asignar personal</div>
+        </Card>
+        )}
+      </div>
+
+      <Card accent={C.orange} sx={{ padding:20 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+          <Bot size={15} color={C.orange}/>
+          <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>AGENTE BAROPS</span>
+          <span style={{ padding:'2px 8px', background:C.tealBg, border:`1px solid ${C.teal}33`, borderRadius:2, fontFamily:F, fontSize:'9px', color:C.teal, letterSpacing:'1.5px' }}>EN LÍNEA</span>
+        </div>
+        <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
+          {CHIPS.map((chip,i)=>(
+            <button key={i} onClick={()=>setChatInput(chip)} style={{ padding:'5px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'12px', color:C.textSec, cursor:'pointer' }}>
+              {chip}
+            </button>
+          ))}
+        </div>
+        <div style={{ display:'flex', gap:10 }}>
+          <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&setChatInput('')}
+            placeholder="Pregunta lo que necesites sobre tu negocio..."
+            style={{ flex:1, padding:'10px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none' }}
+          />
+          <Btn onClick={()=>setChatInput('')} sx={{ padding:'10px 20px', fontSize:'11px' }}>
+            <Send size={13}/> ENVIAR
+          </Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ─── IMPORT COCKTAILS MODAL ──────────────────────────────────────────────────
+function ImportCocktailsModal({ onClose, onSave }) {
+  const [step, setStep] = useState(1);
+  const [raw, setRaw] = useState('');
+  const [parsed, setParsed] = useState([]);
+  const [parseErrors, setParseErrors] = useState([]);
+  const [parseErr, setParseErr] = useState('');
+  const [cocktailType, setCocktailType] = useState('autor');
+  const fileRef = useRef(null);
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target?.result;
+      if (typeof text === 'string') { setRaw(text); doParse(text); }
+    };
+    reader.readAsText(file);
+  };
+
+  const doParse = (csv) => {
+    const { ok, items, errors } = parseCocktailsCSV(csv);
+    if (!ok) { setParseErr(errors[0] || 'Error al parsear CSV'); setParsed([]); setParseErrors([]); return; }
+    setParsed(items);
+    setParseErrors(errors);
+    setParseErr('');
+    setStep(2);
+  };
+
+  const handlePaste = () => {
+    if (!raw.trim()) return;
+    doParse(raw);
+  };
+
+  const removeItem = (idx) => {
+    setParsed(p => p.filter((_, i) => i !== idx));
+  };
+
+  const downloadTemplate = () => {
+    const tpl = `nombre,descripcion,precio\nMargarita Clásica,Patrón · Cointreau · Lima,12.00\nMojito Premium,Ron Diplomático · Menta · Lima,10.50\nNegroni Paradiso,Gin · Campari · Martini,13.00`;
+    const blob = new Blob([tpl], { type:'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'cocteles_template.csv';
+    a.click();
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
+      <Card accent={C.orange} sx={{ padding:28, maxWidth:600, width:'90%', maxHeight:'90vh', overflowY:'auto' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+          <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>IMPORTAR CÓCTELES</span>
+          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
+            <X size={18}/>
+          </button>
+        </div>
+
+        {step === 1 && (
+          <div>
+            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:12 }}>PASO 1: CARGAR CSV</div>
+            <textarea
+              value={raw}
+              onChange={e => setRaw(e.target.value)}
+              placeholder="Pega tu CSV aquí (nombre,descripcion,precio)..."
+              style={{ width:'100%', height:150, padding:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box', marginBottom:12, resize:'vertical' }}
+            />
+            <input ref={fileRef} type="file" accept=".csv" onChange={handleFile} style={{ display:'none' }}/>
+            <div style={{ display:'flex', gap:10, marginBottom:12 }}>
+              <Btn onClick={() => fileRef.current?.click()} sx={{ flex:1, padding:'10px', fontSize:'11px' }}>
+                📎 CARGAR ARCHIVO
+              </Btn>
+              <Btn onClick={downloadTemplate} variant="outline" sx={{ flex:1, padding:'10px', fontSize:'11px' }}>
+                📥 DESCARGAR TEMPLATE
+              </Btn>
+            </div>
+            {parseErr && <div style={{ padding:'10px', background:'#EF444422', border:`1px solid #EF444433`, borderRadius:3, fontSize:'11px', color:'#EF4444', marginBottom:12 }}>{parseErr}</div>}
+            <Btn onClick={handlePaste} sx={{ width:'100%', padding:'11px', fontSize:'11px' }}>
+              → VERIFICAR CSV
+            </Btn>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div>
+            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:12 }}>PASO 2: PREVIEW ({parsed.length} cócteles)</div>
+
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>TIPO DE CÓCTEL</div>
+              <div style={{ display:'flex', gap:10 }}>
+                {[['clasicos', '🍹 CLÁSICOS'], ['autor', '⭐ DE AUTOR']].map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setCocktailType(val)}
+                    style={{
+                      flex:1, padding:'10px 12px', background:cocktailType===val?C.orange+'22':C.cardAlt,
+                      border:`1px solid ${cocktailType===val?C.orange:C.border2}`, borderRadius:3,
+                      fontFamily:F, fontSize:'11px', color:cocktailType===val?C.orange:C.textSec, cursor:'pointer', fontWeight:700, letterSpacing:'1px',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {parseErrors.length > 0 && (
+              <div style={{ padding:'10px', background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:3, fontSize:'10px', color:C.amber, marginBottom:12 }}>
+                ⚠ {parseErrors.length} filas con errores (serán ignoradas)
+              </div>
+            )}
+            <div style={{ maxHeight:300, overflowY:'auto', marginBottom:14 }}>
+              {parsed.map((c, i) => (
+                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, marginBottom:8 }}>
+                  <div>
+                    <div style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{c.name}</div>
+                    {c.description && <div style={{ fontSize:'10px', color:C.textSec, marginTop:2 }}>{c.description.substring(0,50)}</div>}
+                    <div style={{ fontSize:'11px', color:C.orange, fontWeight:700, marginTop:3 }}>€{c.price.toFixed(2)}</div>
+                  </div>
+                  <button onClick={() => removeItem(i)} style={{ background:'none', border:'none', cursor:'pointer', color:'#EF4444', display:'flex' }}>
+                    <Trash2 size={14}/>
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div style={{ display:'flex', gap:10 }}>
+              <Btn variant="outline" onClick={() => setStep(1)} sx={{ flex:1, padding:'11px', fontSize:'11px' }}>← ATRÁS</Btn>
+              <Btn onClick={() => { onSave(parsed, cocktailType); onClose(); }} sx={{ flex:1, padding:'11px', fontSize:'11px' }}>✓ IMPORTAR</Btn>
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ─── CONSUMPTION MODAL ────────────────────────────────────────────────────────
+function ConsumptionModal({ item, onClose, onSave }) {
+  const [weekly, setWeekly] = useState(item.weekly || '3.5 L');
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000, fontFamily:F }}>
+      <Card accent={C.teal} sx={{ padding:28, maxWidth:400, width:'90%' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+          <span style={{ fontFamily:F, fontSize:'12px', color:C.teal, letterSpacing:'3px', fontWeight:700 }}>CONFIGURAR CONSUMO</span>
+          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
+            <X size={18}/>
+          </button>
+        </div>
+
+        <div style={{ marginBottom:6 }}>
+          <div style={{ fontSize:'13px', color:C.text, fontWeight:700, marginBottom:4 }}>{item.name}</div>
+          <div style={{ fontSize:'11px', color:C.textSec, marginBottom:12 }}>Stock actual: {item.stock}</div>
+        </div>
+
+        <div style={{ marginBottom:20 }}>
+          <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>USO SEMANAL ESTIMADO</div>
+          <input
+            value={weekly}
+            onChange={e=>setWeekly(e.target.value)}
+            placeholder="Ej: 3.5 L, 5 bot, 50 ud"
+            style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box', marginBottom:12 }}
+          />
+          <div style={{ fontSize:'10px', color:C.textSec, lineHeight:'1.5', padding:'8px 10px', background:C.tealBg, borderRadius:3, border:`1px solid ${C.teal}33` }}>
+            💡 Ejemplos: "3.5 L" para líquidos, "5 bot" para botellas, "50 ud" para unidades
+          </div>
+        </div>
+
+        <div style={{ display:'flex', gap:10 }}>
+          <Btn variant="outline" onClick={onClose} sx={{ flex:1, padding:'10px' }}>CANCELAR</Btn>
+          <Btn onClick={()=>{ onSave(weekly); onClose(); }} sx={{ flex:1, padding:'10px' }}>GUARDAR</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ─── IMPORT MODAL ─────────────────────────────────────────────────────────────
+function ImportModal({ onClose }) {
+  const { addFromImport } = useApp();
+  const [step, setStep]   = useState(1);
+  const [raw, setRaw]     = useState('');
+  const [parsed, setParsed] = useState([]);
+  const [parseErrors, setParseErrors] = useState([]);
+  const [parseErr, setParseErr] = useState('');
+  const fileRef = useRef(null);
+
+  const handleFile = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setRaw(ev.target.result);
+    reader.readAsText(file, 'UTF-8');
+  };
+
+  const handleAnalyze = () => {
+    if (!raw.trim()) { setParseErr('Pega el contenido del CSV o sube un archivo.'); return; }
+    const result = parseCSV(raw);
+    if (!result.ok) { setParseErr(result.error); return; }
+    if (result.items.length === 0) { setParseErr('No se encontraron filas válidas. Revisa el formato.'); return; }
+    setParseErr(''); setParsed(result.items); setParseErrors(result.errors); setStep(2);
+  };
+
+  const removeItem = (id) => setParsed(p => p.filter(x => x.id !== id));
+
+  const handleConfirm = () => {
+    addFromImport(parsed); onClose();
+  };
+
+  const downloadTemplate = () => {
+    const blob = new Blob([TEMPLATE_CSV], { type:'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a'); a.href=url; a.download='plantilla_almacen_barops.csv'; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const overlay = { position:'fixed', inset:0, background:'rgba(0,0,0,0.82)', zIndex:900, display:'flex', alignItems:'center', justifyContent:'center' };
+  const modal   = { background:C.card, border:`1px solid ${C.border2}`, borderRadius:4, width:'min(760px,94vw)', maxHeight:'90vh', display:'flex', flexDirection:'column', fontFamily:F };
+
+  return (
+    <div style={overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={modal}>
+        {/* Header */}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'18px 24px', borderBottom:`1px solid ${C.border2}` }}>
+          <div>
+            <div style={{ fontSize:'13px', fontWeight:700, letterSpacing:'4px', color:C.text }}>IMPORTAR ALMACÉN</div>
+            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1px', marginTop:3 }}>
+              {step===1?'Pega tu CSV o sube el archivo de inventario':'Revisa los productos antes de confirmar'}
+            </div>
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <span style={{ fontSize:'10px', color:step===1?C.orange:C.textSec, letterSpacing:'2px' }}>01 CARGAR</span>
+            <span style={{ fontSize:'10px', color:C.border2 }}>──</span>
+            <span style={{ fontSize:'10px', color:step===2?C.orange:C.textSec, letterSpacing:'2px' }}>02 CONFIRMAR</span>
+            <button onClick={onClose} style={{ background:'none',border:'none',cursor:'pointer',color:C.textSec,display:'flex',marginLeft:8 }}><X size={16}/></button>
+          </div>
+        </div>
+
+        {step===1 && (
+          <div style={{ padding:'24px', overflowY:'auto' }}>
+            {/* Template download */}
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 16px', background:C.tealBg, border:`1px solid ${C.teal}33`, borderRadius:3, marginBottom:18 }}>
+              <div>
+                <div style={{ fontSize:'11px', color:C.teal, fontWeight:700, letterSpacing:'2px' }}>PLANTILLA CSV</div>
+                <div style={{ fontSize:'11px', color:C.textSec, marginTop:2 }}>Columnas: nombre · categoria · stock · unidad · precio · volumen_cl</div>
+              </div>
+              <Btn variant="outline" onClick={downloadTemplate} sx={{ padding:'7px 14px', fontSize:'10px', borderColor:C.teal, color:C.teal }}>
+                DESCARGAR
+              </Btn>
+            </div>
+
+            {/* Format hint */}
+            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>
+              UNIDADES ACEPTADAS: <span style={{ color:C.text }}>bot / l / cl / ud / kg</span>
+              &nbsp;·&nbsp; Si usas <span style={{ color:C.text }}>bot</span>, añade columna <span style={{ color:C.text }}>volumen_cl</span> (ej: 70 para 70cl)
+            </div>
+
+            {/* Textarea */}
+            <textarea
+              value={raw}
+              onChange={e=>setRaw(e.target.value)}
+              placeholder={`Pega aquí el CSV. Ejemplo:\n\nnombre,categoria,stock,unidad,precio,volumen_cl\nGin Hendrick's,Ginebra,3,bot,15.20,70\nCampari,Amaro,2,bot,14.90,100\nLimones frescos,Fruta fresca,80,ud,0.12,`}
+              style={{
+                width:'100%', height:200, padding:'12px', background:C.cardAlt,
+                border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F,
+                fontSize:'12px', color:C.text, outline:'none', resize:'vertical',
+                lineHeight:'1.6', boxSizing:'border-box',
+              }}
+            />
+
+            {/* Or file input */}
+            <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:12 }}>
+              <input ref={fileRef} type="file" accept=".csv,.txt" onChange={handleFile} style={{ display:'none' }}/>
+              <Btn variant="ghost" onClick={()=>fileRef.current?.click()} sx={{ padding:'8px 16px', fontSize:'10px' }}>
+                CARGAR ARCHIVO .CSV
+              </Btn>
+              <span style={{ fontSize:'11px', color:C.textSec }}>— o pega directamente en el área de texto</span>
+            </div>
+
+            {parseErr && (
+              <div style={{ marginTop:12, padding:'10px 14px', background:C.redBg, border:`1px solid #EF444433`, borderRadius:3, fontSize:'12px', color:'#EF4444' }}>
+                ⚠ {parseErr}
+              </div>
+            )}
+
+            <div style={{ display:'flex', justifyContent:'flex-end', marginTop:20 }}>
+              <Btn onClick={handleAnalyze} sx={{ padding:'10px 28px', fontSize:'11px', letterSpacing:'2px' }}>
+                ANALIZAR →
+              </Btn>
+            </div>
+          </div>
+        )}
+
+        {step===2 && (
+          <div style={{ display:'flex', flexDirection:'column', minHeight:0 }}>
+            {parseErrors.length>0 && (
+              <div style={{ padding:'10px 24px', background:C.amberBg, borderBottom:`1px solid ${C.amber}33`, fontSize:'11px', color:C.amber }}>
+                ⚠ {parseErrors.length} fila(s) ignorada(s) por precio inválido
+              </div>
+            )}
+            <div style={{ overflowY:'auto', flex:1, padding:'0 0 8px' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                <thead>
+                  <tr style={{ background:C.cardAlt, borderBottom:`1px solid ${C.border2}` }}>
+                    {['NOMBRE','CATEGORÍA','STOCK','UNIDAD','€/UNIDAD','ACCIÓN'].map(h=>(
+                      <th key={h} style={{ padding:'10px 16px', textAlign:'left', fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {parsed.map((item,i)=>(
+                    <tr key={item.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
+                      <td style={{ padding:'10px 16px', fontSize:'12px', color:C.text, fontWeight:600 }}>{item.name}</td>
+                      <td style={{ padding:'10px 16px', fontSize:'11px', color:C.textSec }}>{item.cat}</td>
+                      <td style={{ padding:'10px 16px', fontSize:'12px', color:C.text }}>{item.stock}</td>
+                      <td style={{ padding:'10px 16px', fontSize:'11px', color:C.textSec }}>{item.unit}</td>
+                      <td style={{ padding:'10px 16px', fontSize:'12px', color:C.teal, fontWeight:700 }}>€{item.cpu.toFixed(4)}</td>
+                      <td style={{ padding:'10px 16px' }}>
+                        <button onClick={()=>removeItem(item.id)} style={{ background:'none',border:'none',cursor:'pointer',color:'#EF4444',display:'flex',padding:'2px' }}>
+                          <Trash2 size={13}/>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {parsed.length===0&&(
+                <div style={{ textAlign:'center', padding:'40px', fontSize:'12px', color:C.textSec }}>
+                  Has eliminado todos los productos. Vuelve atrás para revisar.
+                </div>
+              )}
+            </div>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'16px 24px', borderTop:`1px solid ${C.border2}` }}>
+              <Btn variant="ghost" onClick={()=>setStep(1)} sx={{ padding:'9px 18px', fontSize:'10px' }}>← VOLVER</Btn>
+              <div style={{ display:'flex', alignItems:'center', gap:16 }}>
+                <span style={{ fontSize:'11px', color:C.textSec }}>{parsed.length} producto{parsed.length!==1?'s':''} listos para importar</span>
+                <Btn disabled={parsed.length===0} onClick={handleConfirm} sx={{ padding:'10px 28px', fontSize:'11px', letterSpacing:'2px' }}>
+                  CONFIRMAR E IMPORTAR
+                </Btn>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── SCREEN 2: INVENTARIO ─────────────────────────────────────────────────────
+function Inventario() {
+  const { customInv = [] } = useApp() || {};
+  const [filter, setFilter]       = useState('all');
+  const [toast, setToast]         = useState(null);
+  const [showImport, setShowImport] = useState(false);
+  const [consumptionModal, setConsumptionModal] = useState(null);
+  const [customConsumption, setCustomConsumption] = useState({});
+  const allItems = [...INVENTORY, ...customInv];
+  const FILTERS = [{ id:'all',label:'TODOS' },{ id:'critical',label:'EN RIESGO' },{ id:'medium',label:'PREVENTIVO' },{ id:'stable',label:'ESTABLE' }];
+  const visible = filter==='all'?allItems:allItems.filter(i=>i.risk===filter);
+
+  const saveConsumption = (itemId, weekly) => {
+    setCustomConsumption(p=>({...p,[itemId]:weekly}));
+    setToast(`Consumo de ${allItems.find(x=>x.id===itemId)?.name} actualizado a ${weekly}/semana`);
+  };
+  return (
+    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
+      {toast&&<Toast msg={toast} onClose={()=>setToast(null)}/>}
+      {showImport&&<ImportModal onClose={()=>setShowImport(false)}/>}
+      {consumptionModal&&<ConsumptionModal item={consumptionModal} onClose={()=>setConsumptionModal(null)} onSave={(weekly)=>saveConsumption(consumptionModal.id,weekly)}/>}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
+        <div>
+          <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INVENTARIO INTELIGENTE</h1>
+          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
+            Predicción de stock con IA — {allItems.length} referencias monitorizadas
+            {customInv.length>0&&<span style={{ color:C.teal }}> · {customInv.length} importadas</span>}
+          </p>
+        </div>
+        <Btn variant="outline" onClick={()=>setShowImport(true)} sx={{ padding:'9px 18px', fontSize:'10px', letterSpacing:'2px' }}>
+          IMPORTAR ALMACÉN
+        </Btn>
+      </div>
+      <div style={{ display:'flex', gap:8, marginBottom:18 }}>
+        {FILTERS.map(f=>(
+          <button key={f.id} onClick={()=>setFilter(f.id)} style={{
+            padding:'6px 16px', borderRadius:2, fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700, cursor:'pointer',
+            background:filter===f.id?C.orange:C.cardAlt, color:filter===f.id?'#000':C.textSec,
+            border:filter===f.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`, transition:'all 0.12s',
+          }}>{f.label}</button>
+        ))}
+      </div>
+      <Card sx={{ marginBottom:22, overflow:'hidden' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom:`1px solid ${C.border2}`, background:C.cardAlt }}>
+              {['PRODUCTO','CATEGORÍA','STOCK ACTUAL','USO SEMANAL','DÍAS RESTANTES','COSTE/USO','ACCIÓN'].map(h=>(
+                <th key={h} style={{ padding:'12px 16px', textAlign:'left', fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((item,i)=>{
+              const displayWeekly = customConsumption[item.id] || item.weekly;
+              return (
+              <tr key={item.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
+                <td style={{ padding:'13px 16px', fontSize:'13px', color:C.text, fontWeight:700 }}>{item.name}</td>
+                <td style={{ padding:'13px 16px', fontSize:'11px', color:C.textSec }}>{item.cat}</td>
+                <td style={{ padding:'13px 16px', fontSize:'13px', color:C.text }}>{item.stock}</td>
+                <td style={{ padding:'13px 16px' }}>
+                  <div style={{ fontSize:'12px', color:customConsumption[item.id]?C.teal:C.textSec, fontWeight:customConsumption[item.id]?700:400 }}>
+                    {displayWeekly}
+                  </div>
+                  <button onClick={()=>setConsumptionModal(item)} style={{ marginTop:4, fontSize:'9px', color:C.amber, background:'none', border:'none', cursor:'pointer', letterSpacing:'1px', textDecoration:'underline' }}>
+                    Editar
+                  </button>
+                </td>
+                <td style={{ padding:'13px 16px' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                    <StockBar pct={item.pct}/>
+                    <span style={{ fontFamily:F, fontSize:'12px', fontWeight:700, color:item.days<=3?'#EF4444':item.days<=7?C.amber:C.teal }}>{item.days}d</span>
+                  </div>
+                </td>
+                <td style={{ padding:'13px 16px', fontSize:'12px', color:C.teal }}>{item.cost}</td>
+                <td style={{ padding:'13px 16px' }}>
+                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                    <RiskBadge risk={item.risk}/>
+                    {item.risk!=='stable'&&<Btn variant="outline" sx={{ padding:'4px 10px', fontSize:'9px' }} onClick={()=>setToast(`Pedido de ${item.name} añadido a la lista`)}>PEDIR</Btn>}
+                  </div>
+                </td>
+              </tr>
+            );
+            })}
+          </tbody>
+        </table>
+      </Card>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:16 }}>
+        <Card accent={C.purple} sx={{ padding:20 }}>
+          <SLabel label="PREDICCIÓN ESTE FIN DE SEMANA" color={C.purple} icon={Zap}/>
+          {[["Gin Tonic Hendrick's","~52 uds"],["Aperol Spritz","~48 uds"],["Negroni","~38 uds"],["Mojito","~35 uds"],["Old Fashioned","~22 uds"]].map(([n,u],i)=>(
+            <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'7px 0', borderBottom:`1px solid ${C.border}`, fontSize:'12px' }}>
+              <span style={{ color:C.textSec }}>#{i+1} {n}</span>
+              <span style={{ color:C.purple, fontWeight:700 }}>{u}</span>
+            </div>
+          ))}
+        </Card>
+        <Card accent={C.amber} sx={{ padding:20 }}>
+          <SLabel label="COSTE TEÓRICO VS REAL" color={C.amber} icon={TrendingUp}/>
+          {[['Coste teórico ventas','€4.280',C.textSec],['Coste real registrado','€4.990',C.amber],['Diferencia (merma)','+€710','#EF4444'],['Porcentaje de merma','14.2%','#EF4444'],['Objetivo BarOps','< 8%',C.teal]].map(([l,v,co],i)=>(
+            <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'7px 0', borderBottom:`1px solid ${C.border}`, fontSize:'12px' }}>
+              <span style={{ color:C.textSec }}>{l}</span>
+              <span style={{ color:co, fontWeight:700 }}>{v}</span>
+            </div>
+          ))}
+        </Card>
+        <Card accent={C.teal} sx={{ padding:20 }}>
+          <SLabel label="PEDIDO RECOMENDADO IA" color={C.teal} icon={ShoppingCart}/>
+          {[["Aperol","6 botellas","HOY",'#EF4444'],["Campari","4 botellas","HOY",'#EF4444'],["Gin Hendrick's","3 botellas","MAÑANA",C.amber],["Limones frescos","3 kg","MAÑANA",C.amber],["Vermut Martini","2 botellas","ESTA SEM.",C.teal]].map(([n,q,u,co],i)=>(
+            <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'6px 0', borderBottom:`1px solid ${C.border}`, fontSize:'12px' }}>
+              <span style={{ color:C.text }}>{n}</span>
+              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                <span style={{ color:C.textSec, fontSize:'11px' }}>{q}</span>
+                <span style={{ color:co, fontWeight:700, fontSize:'9px', letterSpacing:'1px' }}>{u}</span>
+              </div>
+            </div>
+          ))}
+          <Btn variant="teal" sx={{ width:'100%', marginTop:14, justifyContent:'center', padding:'9px', letterSpacing:'2px', fontSize:'10px' }}>
+            GENERAR PEDIDO COMPLETO
+          </Btn>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ─── SCREEN 3: STAFFING REDISEÑADO ────────────────────────────────────────────
+function Staffing() {
+  const [toast, setToast]       = useState(null);
+  const [covOpen, setCovOpen]   = useState(false);
+  const [availFilter, setAF]    = useState('all');
+  const [assigned, setAssigned] = useState({});
+
+  const totalCostWeek = [...OPEN_SHIFTS,...COVERED_SHIFTS]
+    .reduce((a,s)=>a+parseInt(s.cost.replace('€','')),0);
+  const openPending = OPEN_SHIFTS.filter(s=>!assigned[s.id]);
+  const filteredTalent = availFilter==='all' ? TALENT : TALENT.filter(t=>t.avail===availFilter);
+
+  const doAssign = (shiftId, name) => {
+    setAssigned(p=>({...p,[shiftId]:name}));
+    setToast(`${name} asignado correctamente`);
+  };
+
+  return (
+    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
+      {toast&&<Toast msg={toast} onClose={()=>setToast(null)}/>}
+
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
+        <div>
+          <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>STAFFING</h1>
+          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
+            Semana 28 Abr – 3 May · {openPending.length} turno{openPending.length!==1?'s':''} sin cubrir
+          </p>
+        </div>
+        <Btn onClick={()=>setToast('Formulario de turno urgente abierto')} sx={{ padding:'10px 20px', fontSize:'11px' }}>
+          <Plus size={14}/> PUBLICAR TURNO URGENTE
+        </Btn>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:22 }}>
+        {[
+          { label:'TURNOS SEMANA',   value:`${COVERED_SHIFTS.length+Object.keys(assigned).length}/${COVERED_SHIFTS.length+OPEN_SHIFTS.length}`, color:C.teal   },
+          { label:'COSTE EST. SEMANA',value:`€${totalCostWeek}`,                                                                                  color:C.orange },
+          { label:'SIN CUBRIR',      value:String(openPending.length),                                                                            color:'#EF4444'},
+          { label:'URGENTES',        value:String(openPending.filter(s=>s.status==='urgent').length),                                             color:'#EF4444'},
+        ].map(({ label,value,color },i)=>(
+          <Card key={i} accent={color} sx={{ padding:'14px 18px', background:`${color}0D` }}>
+            <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>{label}</div>
+            <div style={{ fontSize:'26px', color, fontWeight:700, letterSpacing:'1px', lineHeight:1 }}>{value}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Two-column layout */}
+      <div style={{ display:'grid', gridTemplateColumns:'58% 1fr', gap:16 }}>
+
+        {/* LEFT — Open shifts + matching */}
+        <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <AlertTriangle size={13} color='#EF4444'/>
+            <span style={{ fontFamily:F, fontSize:'11px', color:'#EF4444', letterSpacing:'3px', fontWeight:700 }}>NECESITAN COBERTURA</span>
+          </div>
+
+          {OPEN_SHIFTS.map(shift=>{
+            const isAssigned = !!assigned[shift.id];
+            const matchedTalent = TALENT.filter(t=>shift.match.includes(t.name));
+            const borderColor = isAssigned?C.teal:shift.status==='urgent'?'#EF4444':C.amber;
+            return (
+              <Card key={shift.id} accent={borderColor} sx={{ overflow:'hidden' }}>
+                {/* header */}
+                <div style={{
+                  padding:'14px 16px', display:'flex', justifyContent:'space-between', alignItems:'center',
+                  background: isAssigned?C.tealBg:shift.status==='urgent'?'#EF444410':C.amberBg,
+                  borderBottom:`1px solid ${borderColor}33`,
+                }}>
+                  <div>
+                    <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4 }}>
+                      <span style={{ fontSize:'14px', color:C.text, fontWeight:700 }}>{shift.profile}</span>
+                      {isAssigned
+                        ? <Badge label="CUBIERTO" color={C.teal} bg={C.tealBg}/>
+                        : <ShiftBadge status={shift.status}/>
+                      }
+                    </div>
+                    <div style={{ display:'flex', gap:16 }}>
+                      <span style={{ fontSize:'12px', color:C.textSec }}>{shift.date}</span>
+                      <span style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{shift.time}</span>
+                      <span style={{ fontSize:'12px', color:C.orange, fontWeight:700 }}>{shift.cost}</span>
+                    </div>
+                  </div>
+                  {isAssigned&&(
+                    <div style={{ textAlign:'right' }}>
+                      <div style={{ fontSize:'12px', color:C.teal }}>→ {assigned[shift.id]}</div>
+                      <button onClick={()=>setAssigned(p=>{const n={...p};delete n[shift.id];return n;})}
+                        style={{ background:'none',border:'none',color:C.textSec,fontFamily:F,fontSize:'10px',cursor:'pointer',marginTop:2,letterSpacing:'0.5px' }}>
+                        desasignar
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {/* suggestions */}
+                {!isAssigned&&(
+                  <div style={{ padding:'12px 16px' }}>
+                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>SUGERENCIAS DE COBERTURA</div>
+                    <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                      {matchedTalent.map(p=>(
+                        <div key={p.id} style={{
+                          display:'flex', alignItems:'center', justifyContent:'space-between',
+                          padding:'9px 12px', background:C.cardAlt,
+                          border:`1px solid ${p.avail==='today'?C.teal+'33':C.border}`, borderRadius:3,
+                        }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                            <Avatar ini={p.ini} size={32}/>
+                            <div>
+                              <div style={{ fontSize:'13px', color:C.text, fontWeight:700 }}>{p.name}</div>
+                              <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:2 }}>
+                                <span style={{ fontSize:'10px', color:C.textSec }}>{p.spec}</span>
+                                <Stars rating={p.rating}/>
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                            <AvailBadge avail={p.avail}/>
+                            <span style={{ fontSize:'14px', color:C.orange, fontWeight:700 }}>{p.rate}</span>
+                            <Btn variant="teal" sx={{ padding:'6px 12px', fontSize:'9px' }} onClick={()=>doAssign(shift.id,p.name)}>
+                              <UserCheck size={11}/> ASIGNAR
+                            </Btn>
+                          </div>
+                        </div>
+                      ))}
+                      {matchedTalent.length===0&&(
+                        <div style={{ fontSize:'12px', color:C.textSec, padding:'8px 0' }}>Sin coincidencias — amplía la búsqueda</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+
+          {/* Collapsible covered */}
+          <button onClick={()=>setCovOpen(p=>!p)} style={{
+            display:'flex', alignItems:'center', gap:8, background:'none',
+            border:`1px solid ${C.border2}`, borderRadius:3, padding:'10px 14px',
+            cursor:'pointer', width:'100%', fontFamily:F, color:C.textSec, fontSize:'11px', letterSpacing:'2px',
+          }}>
+            {covOpen?<ChevronUp size={13}/>:<ChevronDown size={13}/>}
+            TURNOS CUBIERTOS ESTA SEMANA ({COVERED_SHIFTS.length})
+            <span style={{ marginLeft:'auto', color:C.teal, fontSize:'12px', fontWeight:700 }}>
+              €{COVERED_SHIFTS.reduce((a,s)=>a+parseInt(s.cost.replace('€','')),0)}
+            </span>
+          </button>
+          {covOpen&&(
+            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              {COVERED_SHIFTS.map(s=>(
+                <Card key={s.id} sx={{ padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                  <div>
+                    <div style={{ fontSize:'11px', color:C.textSec, marginBottom:2 }}>{s.date} · {s.time}</div>
+                    <div style={{ fontSize:'13px', color:C.text, fontWeight:700 }}>{s.profile}</div>
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                    <div style={{ textAlign:'right' }}>
+                      <div style={{ fontSize:'12px', color:C.teal, fontWeight:700 }}>→ {s.pro}</div>
+                      <Stars rating={s.rating}/>
+                    </div>
+                    <span style={{ fontSize:'12px', color:C.textSec }}>{s.cost}</span>
+                    <Badge label="CUBIERTO" color={C.teal} bg={C.tealBg}/>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT — Talent directory */}
+        <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <Users size={13} color={C.teal}/>
+            <span style={{ fontFamily:F, fontSize:'11px', color:C.teal, letterSpacing:'3px', fontWeight:700 }}>RED DE TALENTO</span>
+          </div>
+          <div style={{ display:'flex', gap:6 }}>
+            {[['all','TODOS'],['today','HOY'],['weekend','FINDE']].map(([id,label])=>(
+              <button key={id} onClick={()=>setAF(id)} style={{
+                flex:1, padding:'6px 4px', fontFamily:F, fontSize:'9px', letterSpacing:'1.5px', fontWeight:700,
+                cursor:'pointer', borderRadius:2,
+                background:availFilter===id?C.teal:C.cardAlt,
+                color:availFilter===id?'#000':C.textSec,
+                border:availFilter===id?`1px solid ${C.teal}`:`1px solid ${C.border2}`,
+              }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {filteredTalent.map(p=>(
+              <Card key={p.id} accent={p.avail==='today'?C.teal:undefined} sx={{ padding:'14px' }}>
+                <div style={{ display:'flex', gap:10, marginBottom:10 }}>
+                  <Avatar ini={p.ini} size={38}/>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:'13px', color:C.text, fontWeight:700 }}>{p.name}</div>
+                    <div style={{ fontSize:'10px', color:C.textSec, margin:'2px 0 4px' }}>{p.spec}</div>
+                    <Stars rating={p.rating}/>
+                  </div>
+                  <div style={{ textAlign:'right', flexShrink:0 }}>
+                    <div style={{ fontSize:'15px', color:C.orange, fontWeight:700 }}>{p.rate}</div>
+                    <AvailBadge avail={p.avail}/>
+                  </div>
+                </div>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:4 }}>
+                    {p.tags.map(t=>(
+                      <span key={t} style={{ padding:'2px 6px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'9px', color:C.textSec }}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                  <Btn disabled={p.avail==='unavailable'} onClick={()=>setToast(`Solicitud enviada a ${p.name}`)} sx={{ marginLeft:8, flexShrink:0, padding:'5px 10px', fontSize:'9px' }}>
+                    CONTRATAR
+                  </Btn>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SCREEN 4: AGENTE IA — CONECTADO A CLAUDE ─────────────────────────────────
+function AgenteIA() {
+  const [messages, setMessages] = useState(INITIAL_CHAT);
+  const [input, setInput]       = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [apiErr, setApiErr]     = useState(null);
+  const bottomRef               = useRef(null);
+
+  const CHIPS = [
+    '¿Cómo mejorar mi margen en Gin Tonics?',
+    'Genera la lista de pedido para este finde',
+    '¿Cuál es mi cóctel más rentable?',
+    '¿Qué bartender me recomiendas para el sábado?',
+  ];
+
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({ behavior:'smooth' }); },[messages, loading]);
+
+  const send = async (overrideText) => {
+    const text = overrideText !== undefined ? overrideText : input;
+    if (!text.trim() || loading) return;
+    setInput('');
+    setApiErr(null);
+    const userMsg = { id:Date.now(), role:'user', time:getNow(), text };
+    const next = [...messages, userMsg];
+    setMessages(next);
+    setLoading(true);
+    try {
+      const reply = await callClaude(next);
+      setMessages(prev=>[...prev,{ id:Date.now()+1, role:'agent', time:getNow(), text:reply }]);
+    } catch(e) {
+      if (e.message==='API_KEY_MISSING') { setApiErr(true); }
+      else { setMessages(prev=>[...prev,{ id:Date.now()+1, role:'agent', time:getNow(), text:`Error de conexión: ${e.message}` }]); }
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div style={{ flex:1, display:'flex', flexDirection:'column', fontFamily:F, overflow:'hidden' }}>
+      {/* Header */}
+      <div style={{ padding:'20px 28px', borderBottom:`1px solid ${C.border2}`, display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:14 }}>
+          <div style={{ width:38, height:38, borderRadius:4, background:`${C.orange}18`, border:`1px solid ${C.orange}44`, display:'flex', alignItems:'center', justifyContent:'center' }}>
+            <Bot size={18} color={C.orange}/>
+          </div>
+          <div>
+            <div style={{ fontFamily:F, fontSize:'15px', fontWeight:700, color:C.orange, letterSpacing:'4px' }}>AGENTE BAROPS</div>
+            <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, marginTop:2 }}>Tu analista de negocio personal — activo 24/7</div>
+          </div>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <span style={{ padding:'5px 12px', background:C.purpleBg, border:`1px solid ${C.purple}44`, borderRadius:2, fontFamily:F, fontSize:'9px', color:C.purple, letterSpacing:'1.5px', fontWeight:700 }}>
+            CLAUDE AI POWERED
+          </span>
+          <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+            <div style={{ width:7, height:7, borderRadius:'50%', background:loading?C.amber:C.teal, boxShadow:`0 0 8px ${loading?C.amber:C.teal}` }}/>
+            <span style={{ fontFamily:F, fontSize:'10px', color:loading?C.amber:C.teal, letterSpacing:'1.5px' }}>
+              {loading?'PROCESANDO':'EN LÍNEA'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* API key error */}
+      {apiErr&&(
+        <div style={{ margin:'16px 28px 0', padding:'14px 18px', background:'#EF444415', border:`1px solid #EF444444`, borderRadius:4, fontFamily:F, fontSize:'12px', color:'#EF4444', lineHeight:'1.8' }}>
+          <strong>API KEY no configurada.</strong> Para activar el agente:<br/>
+          1. Abre <code style={{ background:'#2a2a2a', padding:'1px 6px', borderRadius:2 }}>barops-preview/.env.local</code><br/>
+          2. Sustituye <code style={{ background:'#2a2a2a', padding:'1px 6px', borderRadius:2 }}>TU_API_KEY_AQUI</code> por tu clave de Anthropic<br/>
+          3. Reinicia: <code style={{ background:'#2a2a2a', padding:'1px 6px', borderRadius:2 }}>npm run dev</code>
+        </div>
+      )}
+
+      {/* Messages */}
+      <div style={{ flex:1, overflowY:'auto', padding:'24px 32px', display:'flex', flexDirection:'column', gap:18 }}>
+        {messages.map(msg=>(
+          <div key={msg.id} style={{ display:'flex', flexDirection:'column', alignSelf:msg.role==='user'?'flex-end':'flex-start', maxWidth:'72%' }}>
+            <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:5, padding:'0 4px', textAlign:msg.role==='user'?'right':'left' }}>
+              {msg.role==='user'?'TÚ':'⚡ AGENTE BAROPS'} · {msg.time}
+            </div>
+            <div style={{
+              padding:'14px 18px',
+              background:msg.role==='user'?C.orangeBg:C.card,
+              border:`1px solid ${msg.role==='user'?C.orange+'44':C.border2}`,
+              borderRadius:msg.role==='user'?'8px 2px 8px 8px':'2px 8px 8px 8px',
+            }}>
+              <pre style={{ margin:0, fontFamily:F, fontSize:'13px', color:C.text, lineHeight:'1.7', whiteSpace:'pre-wrap', wordBreak:'break-word' }}>
+                {msg.text}
+              </pre>
+            </div>
+          </div>
+        ))}
+        {loading&&(
+          <div style={{ display:'flex', flexDirection:'column', alignSelf:'flex-start', maxWidth:'72%' }}>
+            <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:5 }}>⚡ AGENTE BAROPS · {getNow()}</div>
+            <div style={{ padding:'14px 18px', background:C.card, border:`1px solid ${C.border2}`, borderRadius:'2px 8px 8px 8px' }}>
+              <TypingDots/>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef}/>
+      </div>
+
+      {/* Input */}
+      <div style={{ padding:'16px 32px 24px', borderTop:`1px solid ${C.border2}`, flexShrink:0 }}>
+        <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
+          {CHIPS.map((chip,i)=>(
+            <button key={i} onClick={()=>send(chip)} style={{ padding:'5px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'12px', color:C.textSec, cursor:'pointer' }}>
+              {chip}
+            </button>
+          ))}
+        </div>
+        <div style={{ display:'flex', gap:10 }}>
+          <input
+            value={input}
+            onChange={e=>setInput(e.target.value)}
+            onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&send()}
+            disabled={loading}
+            placeholder="Pregunta lo que necesites sobre tu negocio..."
+            style={{ flex:1, padding:'12px 16px', background:C.card, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', opacity:loading?.6:1 }}
+          />
+          <Btn onClick={()=>send()} disabled={loading} sx={{ padding:'12px 24px', fontSize:'11px' }}>
+            <Send size={14}/> ENVIAR
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SCREEN 5: ANALYTICS ──────────────────────────────────────────────────────
+const TT_STYLE = { background:C.card, border:`1px solid #333`, fontFamily:F, fontSize:'11px', borderRadius:3, color:C.text };
+
+function Analytics() {
+  return (
+    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
+      <div style={{ marginBottom:28 }}>
+        <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INTELIGENCIA DE NEGOCIO</h1>
+        <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Análisis de rendimiento — Paradiso Cocktail Bar · Nov 2025 – Abr 2026</p>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:22 }}>
+        <Card accent={C.teal} sx={{ padding:26, background:C.tealBg }}>
+          <div style={{ fontSize:'10px', color:C.teal, letterSpacing:'2.5px', fontWeight:700, marginBottom:10 }}>AHORRO ACUMULADO CON BAROPS</div>
+          <div style={{ fontSize:'46px', color:C.teal, fontWeight:700, letterSpacing:'2px', lineHeight:1 }}>€7.240</div>
+          <div style={{ fontSize:'12px', color:C.textSec, marginTop:10 }}>Desde noviembre 2025 · 6 meses de uso</div>
+          <div style={{ fontSize:'12px', color:C.teal, marginTop:5 }}>↓ Merma reducida: €2.000/mes → €710/mes actual</div>
+        </Card>
+        <Card accent={C.orange} sx={{ padding:26, background:C.orangeBg }}>
+          <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:10 }}>ROI DE BAROPS ESTE MES</div>
+          <div style={{ fontSize:'46px', color:C.orange, fontWeight:700, letterSpacing:'2px', lineHeight:1 }}>5.7×</div>
+          <div style={{ fontSize:'12px', color:C.textSec, marginTop:10 }}>Coste BarOps: €199/mes · Ahorro: €1.140/mes</div>
+          <div style={{ fontSize:'12px', color:C.orange, marginTop:5 }}>→ €941 beneficio neto mensual vs no tener BarOps</div>
+        </Card>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:18, marginBottom:22 }}>
+        <Card sx={{ padding:20 }}>
+          <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>EVOLUCIÓN MERMA MENSUAL (€)</div>
+          <ResponsiveContainer width="100%" height={210}>
+            <LineChart data={MERMA_DATA}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border2}/>
+              <XAxis dataKey="m" stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
+              <YAxis stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
+              <Tooltip contentStyle={TT_STYLE} labelStyle={{ color:C.text }}/>
+              <Legend wrapperStyle={{ fontFamily:F, fontSize:'10px', paddingTop:'10px' }}/>
+              <Line type="monotone" dataKey="antes" stroke="#EF4444" strokeWidth={2} dot={{ fill:'#EF4444',r:4 }} name="Sin BarOps"/>
+              <Line type="monotone" dataKey="despues" stroke={C.teal} strokeWidth={2} dot={{ fill:C.teal,r:4 }} name="Con BarOps"/>
+            </LineChart>
+          </ResponsiveContainer>
+        </Card>
+        <Card sx={{ padding:20 }}>
+          <div style={{ fontSize:'10px', color:C.purple, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>CONSUMO POR CATEGORÍA — ABRIL (€)</div>
+          <ResponsiveContainer width="100%" height={210}>
+            <BarChart data={CAT_DATA}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border2}/>
+              <XAxis dataKey="n" stroke={C.border2} tick={{ fontFamily:F, fontSize:9, fill:C.textSec }}/>
+              <YAxis stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
+              <Tooltip contentStyle={TT_STYLE} labelStyle={{ color:C.text }}/>
+              <Bar dataKey="v" fill={C.purple} radius={[2,2,0,0]} name="Consumo €"/>
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      </div>
+      <Card sx={{ overflow:'hidden' }}>
+        <div style={{ padding:'16px 20px', borderBottom:`1px solid ${C.border2}`, display:'flex', alignItems:'center', gap:8 }}>
+          <TrendingUp size={13} color={C.amber}/>
+          <span style={{ fontFamily:F, fontSize:'10px', color:C.amber, letterSpacing:'2.5px', fontWeight:700 }}>TOP 10 PRODUCTOS POR RENTABILIDAD — ABRIL 2026</span>
+        </div>
+        <table style={{ width:'100%', borderCollapse:'collapse' }}>
+          <thead>
+            <tr style={{ background:C.cardAlt, borderBottom:`1px solid ${C.border2}` }}>
+              {['#','PRODUCTO','CATEGORÍA','COSTE REAL','PRECIO CARTA','MARGEN REAL','UNIDADES/MES'].map(h=>(
+                <th key={h} style={{ padding:'11px 16px', textAlign:'left', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {TOP_PRODUCTS.map((p,i)=>{
+              const mg=parseFloat(p.margin);
+              const mc=mg>87?C.teal:mg>80?C.amber:'#EF4444';
+              return (
+                <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'11px', color:C.textSec }}>#{i+1}</td>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'13px', color:C.text, fontWeight:i<3?700:400 }}>{p.name}</td>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'11px', color:C.textSec }}>{p.cat}</td>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'12px', color:C.textSec }}>{p.cost}</td>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.price}</td>
+                  <td style={{ padding:'12px 16px' }}><span style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:mc }}>{p.margin}</span></td>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'12px', color:C.textSec }}>{p.units}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+// ─── COCKTAIL CARD ────────────────────────────────────────────────────────────
+function CocktailCard({ cocktail, readonly, onDelete, onEdit }) {
+  const [open, setOpen] = useState(false);
+  const mc = marginColor(cocktail.margin);
+  const ings = cocktail.ings || cocktail.ingredients || [];
+  return (
+    <Card sx={{ overflow:'hidden', display:'flex', flexDirection:'column' }}>
+      <div style={{ padding:'16px 16px 12px' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
+          <div style={{ fontSize:'14px', color:C.text, fontWeight:700, lineHeight:'1.3' }}>{cocktail.name}</div>
+          <div style={{ display:'flex', gap:6, alignItems:'center', flexShrink:0, marginLeft:8 }}>
+            {readonly
+              ? <span style={{ fontFamily:F, fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', padding:'2px 6px', border:`1px solid ${C.border2}`, borderRadius:2 }}>CLÁSICO</span>
+              : <>
+                  {onEdit && <button onClick={onEdit} style={{ background:'none', border:'none', cursor:'pointer', color:C.orange, padding:2, display:'flex', fontSize:'12px' }}>✎</button>}
+                  {onDelete && <button onClick={onDelete} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec, padding:2, display:'flex' }}><Trash2 size={13}/></button>}
+                </>
+            }
+          </div>
+        </div>
+        {cocktail.description && (
+          <div style={{ fontSize:'11px', color:C.textSec, lineHeight:'1.4' }}>{cocktail.description}</div>
+        )}
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', padding:'12px 16px', gap:4, borderTop:`1px solid ${C.border}`, borderBottom:`1px solid ${C.border}` }}>
+        <div>
+          <div style={{ fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', marginBottom:3 }}>COSTE</div>
+          <div style={{ fontSize:'16px', color:C.orange, fontWeight:700 }}>€{Number(cocktail.cost).toFixed(2)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', marginBottom:3 }}>PRECIO</div>
+          <div style={{ fontSize:'16px', color:C.text, fontWeight:700 }}>€{Number(cocktail.price).toFixed(2)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', marginBottom:3 }}>MARGEN</div>
+          <div style={{ fontSize:'16px', color:mc, fontWeight:700 }}>{cocktail.margin}%</div>
+        </div>
+      </div>
+      <button onClick={()=>setOpen(p=>!p)} style={{
+        display:'flex', alignItems:'center', justifyContent:'space-between',
+        padding:'8px 16px', background:C.cardAlt, border:'none', cursor:'pointer',
+        fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1px',
+        borderTop:`1px solid ${C.border}`,
+      }}>
+        VER RECETA {open?<ChevronUp size={11}/>:<ChevronDown size={11}/>}
+      </button>
+      {open && (
+        <div style={{ padding:'10px 16px 14px' }}>
+          {ings.map((ing,i)=>(
+            <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'5px 0', borderBottom:`1px solid ${C.border}`, fontSize:'11px' }}>
+              <span style={{ color:C.textSec }}>{ing.n || `${ing.name} — ${ing.qty} ${ing.unit}`}</span>
+              {ing.cost!=null && <span style={{ color:C.teal }}>€{Number(ing.cost).toFixed(3)}</span>}
+            </div>
+          ))}
+          {!readonly && (
+            <div style={{ display:'flex', justifyContent:'space-between', padding:'7px 0 0', fontSize:'11px', fontWeight:700 }}>
+              <span style={{ color:C.textSec }}>BENEFICIO POR COPA</span>
+              <span style={{ color:mc }}>€{(Number(cocktail.price)-Number(cocktail.cost)).toFixed(2)}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ─── EDIT COCKTAIL MODAL ──────────────────────────────────────────────────────
+function EditCocktailModal({ cocktail, allIngs, onClose, onSave }) {
+  const [form, setForm] = useState({ name: cocktail.name, description: cocktail.description || '', price: cocktail.price });
+  const [formIngs, setFormIngs] = useState(cocktail.ingredients || []);
+  const [newIng, setNewIng] = useState({ id:'', qty:'' });
+  const [ingSearch, setIngSearch] = useState('');
+
+  const liveCost = formIngs.reduce((sum, fi) => {
+    const db = allIngs.find(d => d.id === fi.id);
+    return sum + (db ? db.cpu * parseFloat(fi.qty || 0) : 0);
+  }, 0);
+  const livePrice = parseFloat(form.price) || 0;
+  const liveMargin = livePrice > 0 ? (livePrice - liveCost) / livePrice * 100 : 0;
+  const mc = marginColor(liveMargin);
+  const filtered = ingSearch.trim() ? filterIngredients(ingSearch, allIngs) : [];
+
+  const addIng = () => {
+    if (!newIng.id || !newIng.qty || parseFloat(newIng.qty) <= 0) return;
+    setFormIngs(p => [...p, { uid: Date.now(), ...newIng }]);
+    setNewIng({ id:'', qty:'' });
+    setIngSearch('');
+  };
+
+  const selectIngredient = (ing) => {
+    setNewIng(p => ({...p, id: ing.id}));
+    setIngSearch(ing.name);
+  };
+
+  const handleSave = () => {
+    if (!form.name.trim() || !form.price || formIngs.length === 0) return;
+    const ingredients = formIngs.map(fi => {
+      const db = allIngs.find(d => d.id === fi.id);
+      const qty = parseFloat(fi.qty);
+      return { name: db?.name || fi.id, qty, unit: db?.unit || 'ml', cost: db ? db.cpu * qty : 0 };
+    });
+    onSave({
+      ...cocktail,
+      name: form.name.trim(),
+      description: form.description.trim(),
+      price: parseFloat(form.price),
+      cost: liveCost,
+      margin: liveMargin.toFixed(1),
+      ingredients
+    });
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
+      <Card accent={C.orange} sx={{ padding:28, maxWidth:700, width:'90%', maxHeight:'90vh', overflowY:'auto' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+          <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>EDITAR RECETA</span>
+          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
+            <X size={18}/>
+          </button>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 200px', gap:24 }}>
+          <div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
+              <div>
+                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE *</div>
+                <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}
+                  style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>PRECIO (€) *</div>
+                <input value={form.price} onChange={e => setForm(f => ({...f, price: e.target.value}))}
+                  placeholder="12.00" type="number" step="0.5" min="0"
+                  style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>DESCRIPCIÓN</div>
+              <input value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
+                style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
+              />
+            </div>
+
+            <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>INGREDIENTES *</div>
+
+            {formIngs.length > 0 && (
+              <div style={{ display:'flex', flexDirection:'column', gap:5, marginBottom:10 }}>
+                {formIngs.map(fi => {
+                  const db = allIngs.find(d => d.id === fi.id);
+                  const cost = db ? db.cpu * parseFloat(fi.qty) : 0;
+                  return (
+                    <div key={fi.uid} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:3 }}>
+                      <span style={{ flex:1, fontSize:'12px', color:C.text }}>{db?.name}</span>
+                      <span style={{ fontSize:'12px', color:C.textSec, minWidth:55 }}>{fi.qty} {db?.unit}</span>
+                      <span style={{ fontSize:'12px', color:C.teal, minWidth:52, textAlign:'right', fontWeight:700 }}>€{cost.toFixed(3)}</span>
+                      <button onClick={() => setFormIngs(p => p.filter(i => i.uid !== fi.uid))} style={{ background:'none',border:'none',cursor:'pointer',color:'#EF4444',padding:'0 2px',display:'flex' }}>
+                        <Trash2 size={13}/>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ display:'flex', gap:8, alignItems:'flex-end', position:'relative' }}>
+              <div style={{ flex:1, position:'relative' }}>
+                <input
+                  value={ingSearch}
+                  onChange={e => { setIngSearch(e.target.value); setNewIng(p => ({...p, id:''})); }}
+                  placeholder="🔍 Busca ingrediente..."
+                  style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                />
+                {ingSearch.trim() && filtered.length > 0 && (
+                  <div style={{ position:'absolute', top:'100%', left:0, right:0, background:C.card, border:`1px solid ${C.border2}`, borderTop:'none', borderRadius:'0 0 3px 3px', maxHeight:200, overflowY:'auto', zIndex:10 }}>
+                    {filtered.slice(0, 8).map(ing => (
+                      <div key={ing.id} onClick={() => selectIngredient(ing)} style={{ padding:'8px 12px', cursor:'pointer', borderBottom:`1px solid ${C.border}`, background:newIng.id === ing.id?`${C.orange}22`:'transparent' }}>
+                        <div style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{ing.name}</div>
+                        <div style={{ fontSize:'10px', color:C.textSec }}>@{ing.cat} • {ing.unit}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{ width:76, flexShrink:0 }}>
+                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CANT.</div>
+                <input value={newIng.qty} onChange={e => setNewIng(p => ({...p, qty: e.target.value}))}
+                  onKeyDown={e => e.key === 'Enter' && addIng()}
+                  placeholder="0.5" type="number" step="0.5" min="0"
+                  style={{ width:'100%', padding:'9px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none' }}
+                />
+              </div>
+              <Btn variant="outline" onClick={addIng} sx={{ padding:'9px 14px', flexShrink:0, alignSelf:'flex-end' }}>
+                <Plus size={13}/> ADD
+              </Btn>
+            </div>
+          </div>
+
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            <Card accent={mc} sx={{ padding:20, flex:1 }}>
+              <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:16 }}>PREVIEW</div>
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>COSTE</div>
+                <div style={{ fontSize:'28px', color:C.orange, fontWeight:700, lineHeight:1 }}>€{liveCost.toFixed(2)}</div>
+              </div>
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>PRECIO</div>
+                <div style={{ fontSize:'28px', color:C.text, fontWeight:700, lineHeight:1 }}>€{livePrice.toFixed(2)}</div>
+              </div>
+              <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14 }}>
+                <div style={{ fontSize:'10px', color:C.textSec, marginBottom:6 }}>MARGEN</div>
+                <div style={{ fontSize:'36px', fontWeight:700, color:mc, lineHeight:1 }}>
+                  {livePrice > 0 ? `${liveMargin.toFixed(1)}%` : '—'}
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+
+        <div style={{ display:'flex', gap:10, marginTop:24 }}>
+          <Btn variant="outline" onClick={onClose} sx={{ flex:1, padding:'10px' }}>CANCELAR</Btn>
+          <Btn onClick={handleSave} sx={{ flex:1, padding:'10px' }}>GUARDAR CAMBIOS</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ─── SCREEN 6: CARTA ──────────────────────────────────────────────────────────
+function Carta() {
+  const { customIngs = [] } = useApp() || {};
+  const allIngs = [...INGREDIENTS_DB, ...customIngs];
+
+  const [tab, setTab]                   = useState('clasicos');
+  const [showForm, setShowForm]         = useState(false);
+  const [customs, setCustoms]           = useState(() => {
+    try { return JSON.parse(localStorage.getItem('barops_custom_cocktails')) || []; }
+    catch { return []; }
+  });
+  const [form, setForm]                 = useState({ name:'', description:'', price:'' });
+  const [formIngs, setFormIngs]         = useState([]);
+  const [newIng, setNewIng]             = useState({ id:'', qty:'' });
+  const [toast, setToast]               = useState(null);
+  const [ingSearch, setIngSearch]       = useState('');
+  const [showImportCocteles, setShowImportCocteles] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingCocktail, setEditingCocktail] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem('barops_custom_cocktails', JSON.stringify(customs));
+  }, [customs]);
+
+  // Group ingredients for select with fuzzy search
+  const filtered = ingSearch.trim() ? filterIngredients(ingSearch, allIngs) : allIngs;
+
+  const liveCost = formIngs.reduce((sum,fi)=>{
+    const db = allIngs.find(d=>d.id===fi.id);
+    return sum + (db ? db.cpu * parseFloat(fi.qty||0) : 0);
+  }, 0);
+  const livePrice  = parseFloat(form.price)||0;
+  const liveMargin = livePrice > 0 ? (livePrice-liveCost)/livePrice*100 : 0;
+  const mc = marginColor(liveMargin);
+
+  const addIng = () => {
+    if (!newIng.id || !newIng.qty || parseFloat(newIng.qty)<=0) return;
+    setFormIngs(p=>[...p,{ uid:Date.now(), ...newIng }]);
+    setNewIng({ id:'', qty:'' });
+    setIngSearch('');
+  };
+
+  const selectIngredient = (ing) => {
+    setNewIng(p=>({...p, id:ing.id}));
+    setIngSearch(ing.name);
+  };
+
+  const resetForm = () => {
+    setForm({ name:'', description:'', price:'' });
+    setFormIngs([]);
+    setNewIng({ id:'', qty:'' });
+    setIngSearch('');
+    setShowForm(false);
+  };
+
+  const saveForm = () => {
+    if (!form.name.trim()||!form.price||formIngs.length===0) return;
+    const ingredients = formIngs.map(fi=>{
+      const db = allIngs.find(d=>d.id===fi.id);
+      const qty = parseFloat(fi.qty);
+      return { name:db?.name||fi.id, qty, unit:db?.unit||'cl', cost: db ? db.cpu*qty : 0 };
+    });
+    setCustoms(p=>[...p,{
+      id:Date.now(), name:form.name.trim(), description:form.description.trim(),
+      price:parseFloat(form.price), cost:liveCost,
+      margin: liveMargin.toFixed(1), ingredients,
+    }]);
+    setToast(`"${form.name.trim()}" añadido a la carta`);
+    resetForm();
+    setTab('autor');
+  };
+
+  const openForm = () => { setShowForm(true); setTab('autor'); };
+
+  return (
+    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
+      {toast&&<Toast msg={toast} onClose={()=>setToast(null)}/>}
+
+      {/* Header */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
+        <div>
+          <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>CARTA & COSTES</h1>
+          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
+            {CLASSIC_COCKTAILS_DATA.length} clásicos · {customs.length} de autor · Costes calculados con precios de proveedor actuales
+          </p>
+        </div>
+        <div style={{ display:'flex', gap:10 }}>
+          <Btn variant="outline" onClick={() => setShowImportCocteles(true)} sx={{ padding:'10px 16px', fontSize:'10px' }}>
+            📥 IMPORTAR CSV
+          </Btn>
+          <Btn onClick={openForm} sx={{ padding:'10px 20px', fontSize:'11px' }}>
+            <Plus size={14}/> NUEVO CÓCTEL
+          </Btn>
+        </div>
+      </div>
+
+      {showImportCocteles && (
+        <ImportCocktailsModal
+          onClose={() => setShowImportCocteles(false)}
+          onSave={(items, type) => {
+            if (type === 'clasicos') {
+              setToast(`${items.length} cócteles clásicos — edita en la sección CLÁSICOS`);
+            } else {
+              setCustoms(prev => [...prev, ...items]);
+              setToast(`${items.length} cócteles de autor importados`);
+            }
+          }}
+        />
+      )}
+
+      {showEditModal && editingCocktail && (
+        <EditCocktailModal
+          cocktail={editingCocktail}
+          allIngs={allIngs}
+          onClose={() => { setShowEditModal(false); setEditingCocktail(null); }}
+          onSave={(updated) => {
+            setCustoms(prev => prev.map(c => c.id === updated.id ? updated : c));
+            setToast(`"${updated.name}" actualizado`);
+            setShowEditModal(false);
+            setEditingCocktail(null);
+          }}
+        />
+      )}
+
+      {/* Tabs */}
+      <div style={{ display:'flex', borderBottom:`1px solid ${C.border2}`, marginBottom:22 }}>
+        {[['clasicos',`CLÁSICOS (${CLASSIC_COCKTAILS_DATA.length})`],['autor',`DE AUTOR (${customs.length})`]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{
+            padding:'10px 26px', background:'transparent', cursor:'pointer',
+            fontFamily:F, fontSize:'10px', letterSpacing:'3px', fontWeight:700,
+            color:tab===id?C.orange:C.textSec, border:'none',
+            borderBottom:tab===id?`2px solid ${C.orange}`:'2px solid transparent', marginBottom:'-1px',
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {/* CLÁSICOS */}
+      {tab==='clasicos' && (
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14 }}>
+          {CLASSIC_COCKTAILS_DATA.map(c=><CocktailCard key={c.id} cocktail={c} readonly/>)}
+        </div>
+      )}
+
+      {/* DE AUTOR */}
+      {tab==='autor' && (
+        <div>
+          {/* Add form */}
+          {showForm && (
+            <Card accent={C.orange} sx={{ padding:24, marginBottom:24 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+                <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>NUEVO CÓCTEL DE AUTOR</span>
+                <button onClick={resetForm} style={{ background:'none',border:'none',cursor:'pointer',color:C.textSec,display:'flex' }}><X size={16}/></button>
+              </div>
+
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 300px', gap:24 }}>
+
+                {/* Left: fields */}
+                <div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
+                    <div>
+                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE DEL CÓCTEL *</div>
+                      <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
+                        placeholder="Ej: Paradiso Sour"
+                        style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>PRECIO DE VENTA (€) *</div>
+                      <input value={form.price} onChange={e=>setForm(f=>({...f,price:e.target.value}))}
+                        placeholder="12.00" type="number" step="0.5" min="0"
+                        style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom:18 }}>
+                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>DESCRIPCIÓN / NOTAS</div>
+                    <input value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))}
+                      placeholder="Ej: Versión de la casa con Patrón, zumo de lima y sirope de mango"
+                      style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                    />
+                  </div>
+
+                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>INGREDIENTES *</div>
+
+                  {/* Ingredient rows */}
+                  {formIngs.length>0 && (
+                    <div style={{ display:'flex', flexDirection:'column', gap:5, marginBottom:10 }}>
+                      {formIngs.map(fi=>{
+                        const db = allIngs.find(d=>d.id===fi.id);
+                        const cost = db ? db.cpu * parseFloat(fi.qty) : 0;
+                        return (
+                          <div key={fi.uid} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:3 }}>
+                            <span style={{ flex:1, fontSize:'12px', color:C.text }}>{db?.name}</span>
+                            <span style={{ fontSize:'12px', color:C.textSec, minWidth:55 }}>{fi.qty} {db?.unit}</span>
+                            <span style={{ fontSize:'12px', color:C.teal, minWidth:52, textAlign:'right', fontWeight:700 }}>€{cost.toFixed(3)}</span>
+                            <button onClick={()=>setFormIngs(p=>p.filter(i=>i.uid!==fi.uid))} style={{ background:'none',border:'none',cursor:'pointer',color:'#EF4444',padding:'0 2px',display:'flex' }}>
+                              <Trash2 size={13}/>
+                            </button>
+                          </div>
+                        );
+                      })}
+                      <div style={{ textAlign:'right', fontSize:'11px', color:C.textSec, padding:'4px 0' }}>
+                        Subtotal: <span style={{ color:C.orange, fontWeight:700 }}>€{liveCost.toFixed(3)}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Add ingredient row */}
+                  <div style={{ display:'flex', gap:8, alignItems:'flex-end', position:'relative' }}>
+                    <div style={{ flex:1, position:'relative' }}>
+                      <input
+                        value={ingSearch}
+                        onChange={e=>{ setIngSearch(e.target.value); setNewIng(p=>({...p,id:''})); }}
+                        placeholder="🔍 Busca (escribe: lim, gin, etc)..."
+                        style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                      />
+                      {ingSearch.trim()&&filtered.length>0&&(
+                        <div style={{ position:'absolute', top:'100%', left:0, right:0, background:C.card, border:`1px solid ${C.border2}`, borderTop:'none', borderRadius:'0 0 3px 3px', maxHeight:200, overflowY:'auto', zIndex:10 }}>
+                          {filtered.slice(0,8).map(ing=>(
+                            <div key={ing.id} onClick={()=>selectIngredient(ing)} style={{ padding:'8px 12px', cursor:'pointer', borderBottom:`1px solid ${C.border}`, background:newIng.id===ing.id?`${C.orange}22`:'transparent', transition:'all 0.1s' }}>
+                              <div style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{ing.name}</div>
+                              <div style={{ fontSize:'10px', color:C.textSec }}>@{ing.cat} • {ing.unit}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ width:76, flexShrink:0 }}>
+                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CANTIDAD</div>
+                      <input value={newIng.qty} onChange={e=>setNewIng(p=>({...p,qty:e.target.value}))}
+                        onKeyDown={e=>e.key==='Enter'&&addIng()}
+                        placeholder="cl / ud" type="number" step="0.5" min="0"
+                        style={{ width:'100%', padding:'9px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none' }}
+                      />
+                    </div>
+                    <Btn variant="outline" onClick={addIng} sx={{ padding:'9px 14px', flexShrink:0, alignSelf:'flex-end' }}>
+                      <Plus size={13}/> ADD
+                    </Btn>
+                  </div>
+                </div>
+
+                {/* Right: live preview */}
+                <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                  <Card accent={mc} sx={{ padding:20, flex:1 }}>
+                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:16 }}>PREVIEW EN TIEMPO REAL</div>
+
+                    <div style={{ marginBottom:14 }}>
+                      <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>COSTE TOTAL</div>
+                      <div style={{ fontSize:'30px', color:C.orange, fontWeight:700, lineHeight:1 }}>€{liveCost.toFixed(2)}</div>
+                    </div>
+                    <div style={{ marginBottom:14 }}>
+                      <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>PRECIO VENTA</div>
+                      <div style={{ fontSize:'30px', color:C.text, fontWeight:700, lineHeight:1 }}>
+                        {livePrice>0?`€${livePrice.toFixed(2)}`:'—'}
+                      </div>
+                    </div>
+                    <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14 }}>
+                      <div style={{ fontSize:'10px', color:C.textSec, marginBottom:6 }}>MARGEN REAL</div>
+                      <div style={{ fontSize:'38px', fontWeight:700, color:mc, lineHeight:1 }}>
+                        {livePrice>0?`${liveMargin.toFixed(1)}%`:'—'}
+                      </div>
+                      {livePrice>0&&liveCost>0&&(
+                        <div style={{ fontSize:'11px', color:C.textSec, marginTop:8 }}>
+                          Beneficio por copa: <span style={{ color:mc, fontWeight:700 }}>€{(livePrice-liveCost).toFixed(2)}</span>
+                        </div>
+                      )}
+                      {liveMargin>0&&liveMargin<75&&livePrice>0&&(
+                        <div style={{ fontSize:'10px', color:C.amber, marginTop:10, lineHeight:'1.5', padding:'8px 10px', background:C.amberBg, borderRadius:3, border:`1px solid ${C.amber}33` }}>
+                          ⚠ Margen por debajo del estándar (75%). Considera subir el precio o simplificar la receta.
+                        </div>
+                      )}
+                      {liveMargin>=80&&livePrice>0&&(
+                        <div style={{ fontSize:'10px', color:C.teal, marginTop:10, padding:'8px 10px', background:C.tealBg, borderRadius:3, border:`1px solid ${C.teal}33` }}>
+                          ✓ Margen saludable para coctelería de autor
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+
+                  <div style={{ display:'flex', gap:8 }}>
+                    <Btn variant="ghost" onClick={resetForm} sx={{ flex:1, justifyContent:'center' }}>CANCELAR</Btn>
+                    <Btn
+                      disabled={!form.name.trim()||!form.price||formIngs.length===0}
+                      onClick={saveForm}
+                      sx={{ flex:1, justifyContent:'center' }}
+                    >
+                      GUARDAR
+                    </Btn>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Empty state */}
+          {customs.length===0&&!showForm&&(
+            <div style={{ textAlign:'center', padding:'64px 20px' }}>
+              <div style={{ fontFamily:F, fontSize:'40px', color:C.border2, marginBottom:20 }}>◇</div>
+              <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>TODAVÍA NO HAY CÓCTELES DE AUTOR REGISTRADOS</div>
+              <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginBottom:28, lineHeight:'1.7' }}>
+                Añade los cócteles de la carta de Paradiso para calcular<br/>
+                su coste real y margen con tus precios de proveedor actuales.
+              </div>
+              <Btn onClick={openForm} sx={{ padding:'11px 28px', fontSize:'11px' }}>
+                <Plus size={14}/> AÑADIR PRIMER CÓCTEL DE AUTOR
+              </Btn>
+            </div>
+          )}
+
+          {/* Custom cocktails grid */}
+          {customs.length>0&&(
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14 }}>
+              {customs.map(c=>(
+                <CocktailCard key={c.id} cocktail={c} onEdit={()=>{ setEditingCocktail(c); setShowEditModal(true); }} onDelete={()=>setCustoms(p=>p.filter(x=>x.id!==c.id))}/>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PRICING ──────────────────────────────────────────────────────────────────
+function Pricing() {
+  const [loading, setLoading] = useState(false);
+  const handleCheckout = async (priceId) => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priceId }),
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (err) {
+      console.error('Checkout error:', err);
+      alert('Error al iniciar checkout. Intenta de nuevo.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const monthlyPrice = import.meta.env.VITE_STRIPE_PRICE_MONTHLY;
+  const annualPrice = import.meta.env.VITE_STRIPE_PRICE_ANNUAL;
+
+  return (
+    <div style={{ flex:1, overflow:'auto', padding:'40px 60px' }}>
+      <div style={{ maxWidth:1000, margin:'0 auto' }}>
+        <div style={{ textAlign:'center', marginBottom:60 }}>
+          <div style={{ fontFamily:F, fontSize:'36px', fontWeight:700, color:C.text, marginBottom:12 }}>PLANES BAROPS PRO</div>
+          <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, lineHeight:'1.6' }}>
+            Gestiona tu bar con datos en tiempo real. 14 días de prueba gratis, sin compromiso.
+          </div>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:40, marginBottom:80 }}>
+          {/* Monthly Plan */}
+          <Card accent={C.orange} sx={{ padding:40, position:'relative' }}>
+            <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>PLAN</div>
+            <div style={{ fontFamily:F, fontSize:'28px', fontWeight:700, color:C.text, marginBottom:4 }}>Mensual</div>
+            <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:32 }}>
+              <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.orange }}>€49</span>
+              <span style={{ fontFamily:F, fontSize:'13px', color:C.textSec }}>/mes</span>
+            </div>
+            <div style={{ fontSize:'12px', color:C.textSec, lineHeight:'1.8', marginBottom:32, paddingBottom:32, borderBottom:`1px solid ${C.border2}` }}>
+              <div style={{ marginBottom:10 }}>✓ Acceso a todas las funciones</div>
+              <div style={{ marginBottom:10 }}>✓ Reportes en tiempo real</div>
+              <div style={{ marginBottom:10 }}>✓ Gestión de staff completa</div>
+              <div style={{ marginBottom:10 }}>✓ Base de datos de cócteles</div>
+              <div>✓ Soporte prioritario</div>
+            </div>
+            <Btn
+              onClick={() => handleCheckout(monthlyPrice)}
+              disabled={!monthlyPrice || loading}
+              sx={{ width:'100%', justifyContent:'center', padding:'11px 28px', marginBottom:12 }}
+            >
+              {loading ? 'Cargando...' : 'PROBAR 14 DÍAS GRATIS'}
+            </Btn>
+            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, textAlign:'center', letterSpacing:'1px' }}>
+              Se requiere tarjeta. Cancela cuando quieras.
+            </div>
+          </Card>
+
+          {/* Annual Plan */}
+          <Card accent={C.teal} sx={{ padding:40, position:'relative', background:`linear-gradient(135deg, ${C.card} 0%, ${C.card} 100%), linear-gradient(135deg, ${C.teal}08 0%, transparent 100%)` }}>
+            <div style={{ position:'absolute', top:20, right:20 }}>
+              <Badge label='MÁS POPULAR · 2 MESES GRATIS' color={C.teal} bg={C.tealBg}/>
+            </div>
+            <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>PLAN</div>
+            <div style={{ fontFamily:F, fontSize:'28px', fontWeight:700, color:C.text, marginBottom:4 }}>Anual</div>
+            <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:8 }}>
+              <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.teal }}>€420</span>
+              <span style={{ fontFamily:F, fontSize:'13px', color:C.textSec }}>/año</span>
+            </div>
+            <div style={{ fontFamily:F, fontSize:'11px', color:C.teal, marginBottom:32, fontWeight:700 }}>
+              € 35/mes (ahorra 2 meses)
+            </div>
+            <div style={{ fontSize:'12px', color:C.textSec, lineHeight:'1.8', marginBottom:32, paddingBottom:32, borderBottom:`1px solid ${C.border2}` }}>
+              <div style={{ marginBottom:10 }}>✓ Acceso a todas las funciones</div>
+              <div style={{ marginBottom:10 }}>✓ Reportes en tiempo real</div>
+              <div style={{ marginBottom:10 }}>✓ Gestión de staff completa</div>
+              <div style={{ marginBottom:10 }}>✓ Base de datos de cócteles</div>
+              <div>✓ Soporte prioritario</div>
+            </div>
+            <Btn
+              variant="teal"
+              onClick={() => handleCheckout(annualPrice)}
+              disabled={!annualPrice || loading}
+              sx={{ width:'100%', justifyContent:'center', padding:'11px 28px', marginBottom:12 }}
+            >
+              {loading ? 'Cargando...' : 'PROBAR 14 DÍAS GRATIS'}
+            </Btn>
+            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, textAlign:'center', letterSpacing:'1px' }}>
+              Se requiere tarjeta. Cancela cuando quieras.
+            </div>
+          </Card>
+        </div>
+
+        <div style={{ textAlign:'center', borderTop:`1px solid ${C.border2}`, paddingTop:40 }}>
+          <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginBottom:20, lineHeight:'1.8' }}>
+            Pagos 100% seguros mediante <span style={{ fontWeight:700, color:C.text }}>Stripe</span> · Todos los métodos de pago aceptados<br/>
+            Facturación transparente · Sin sorpresas
+          </div>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:12 }}>
+            <ShoppingCart size={14} color={C.textSec}/>
+            <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1px' }}>APPLE PAY · GOOGLE PAY · TARJETA</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaymentSuccess() {
+  const params = new URLSearchParams(window.location.search);
+  const sessionId = params.get('session_id');
+
+  useEffect(() => {
+    if (sessionId) {
+      localStorage.setItem('barops_subscription', JSON.stringify({
+        status: 'trialing',
+        sessionId,
+        activatedAt: Date.now(),
+      }));
+    }
+  }, [sessionId]);
+
+  return (
+    <div style={{ flex:1, overflow:'auto', padding:'40px 60px', display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ maxWidth:500, textAlign:'center' }}>
+        <div style={{ width:80, height:80, borderRadius:'50%', background:C.tealBg, border:`2px solid ${C.teal}`, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 32px' }}>
+          <CheckCircle size={40} color={C.teal}/>
+        </div>
+        <div style={{ fontFamily:F, fontSize:'32px', fontWeight:700, color:C.text, marginBottom:12 }}>¡Listo!</div>
+        <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, marginBottom:32, lineHeight:'1.8' }}>
+          Tu período de prueba de 14 días ha comenzado. Accede a todas las funciones de BarOps Pro ahora mismo.
+        </div>
+        <Card sx={{ padding:24, marginBottom:24, background:C.cardAlt, borderLeft:`4px solid ${C.teal}` }}>
+          <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>ESTADO DE SUSCRIPCIÓN</div>
+          <div style={{ fontFamily:F, fontSize:'18px', fontWeight:700, color:C.teal }}>EN PERÍODO DE PRUEBA</div>
+          <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginTop:8 }}>
+            Te recordaremos 1 día antes de que finalice el período
+          </div>
+          {sessionId && (
+            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border2}` }}>
+              ID de sesión: <span style={{ fontFamily:'monospace' }}>{sessionId.slice(0,20)}...</span>
+            </div>
+          )}
+        </Card>
+        <Btn
+          variant="primary"
+          sx={{ width:'100%', justifyContent:'center', padding:'11px 28px' }}
+          onClick={() => { window.location.href = '/'; }}
+        >
+          IR AL DASHBOARD
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+// ─── ROOT ─────────────────────────────────────────────────────────────────────
+export default function BarOps() {
+  const params = new URLSearchParams(window.location.search);
+  const initialScreen = (params.get('payment') === 'success' || params.get('session_id')) ? 'success' : 'dashboard';
+  const [screen, setScreen]       = useState(initialScreen);
+  const [customIngs, setCustomIngs] = useState([]);
+  const [customInv,  setCustomInv]  = useState([]);
+
+  const addFromImport = (items) => {
+    setCustomIngs(prev => {
+      const existingIds = new Set([...INGREDIENTS_DB, ...prev].map(x=>x.id));
+      const newIngs = items.filter(x=>!existingIds.has(x.id));
+      return [...prev, ...newIngs];
+    });
+    setCustomInv(prev => {
+      const existingIds = new Set([...INVENTORY, ...prev].map(x=>x.id));
+      const newInv = items.filter(x=>!existingIds.has(x.id));
+      return [...prev, ...newInv];
+    });
+  };
+
+  const ctx = { customIngs, customInv, addFromImport };
+
+  const SCREENS = {
+    dashboard:  <Dashboard/>,
+    inventario: <Inventario/>,
+    staffing:   <Staffing/>,
+    agente:     <AgenteIA/>,
+    analytics:  <Analytics/>,
+    carta:      <Carta/>,
+    pricing:    <Pricing/>,
+    success:    <PaymentSuccess/>,
+  };
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 1024);
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  return (
+    <AppCtx.Provider value={ctx}>
+      <div style={{ display:'flex', flexDirection:isMobile?'column':'row', width:'100vw', height:'100vh', background:C.bg, overflow:'hidden', fontFamily:F }}>
+        <style>{`
+          *{box-sizing:border-box;}
+          html,body,#root{margin:0;padding:0;width:100%;height:100%;}
+          ::-webkit-scrollbar{width:5px;}
+          ::-webkit-scrollbar-track{background:#0a0a0a;}
+          ::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:3px;}
+          ::-webkit-scrollbar-thumb:hover{background:#444;}
+          input::placeholder{color:#444;font-family:'Courier New',Courier,monospace;}
+          button:not(:disabled):hover{filter:brightness(1.1);}
+          pre{font-family:'Courier New',Courier,monospace !important;}
+          code{font-family:'Courier New',Courier,monospace;}
+          @media (max-width: 1024px) {
+            body { font-size: 14px; }
+          }
+        `}</style>
+        <Sidebar active={screen} setActive={setScreen}/>
+        <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', marginTop:isMobile?60:0 }}>
+          {SCREENS[screen]}
+        </div>
+      </div>
+    </AppCtx.Provider>
+  );
+}
