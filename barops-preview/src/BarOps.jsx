@@ -2700,45 +2700,78 @@ function Local({ localName, onLocalNameChange }) {
   }, []);
 
   const fetchLocalData = async () => {
+    // Primero cargamos desde localStorage instantáneamente
+    const cached = {
+      nombre:   localStorage.getItem('barops_local_nombre') || '',
+      direccion: localStorage.getItem('barops_local_direccion') || '',
+      ciudad:   localStorage.getItem('barops_local_ciudad') || '',
+      aforo:    localStorage.getItem('barops_local_aforo') || '',
+    };
+    if (cached.nombre) setFormData(cached);
+
+    // Luego intentamos leer de Supabase (best-effort)
     try {
-      if (!supabase) throw new Error('Supabase no conectado');
-      const { data, error } = await supabase.from('locales').select('*').eq('id', LOCAL_ID).single();
-      if (error) throw error;
-      setFormData({
-        nombre: data.nombre || '',
-        direccion: data.direccion || '',
-        ciudad: data.ciudad || '',
-        aforo: data.aforo || ''
-      });
+      if (!supabase) throw new Error('Sin Supabase');
+      const { data, error } = await supabase
+        .from('locales')
+        .select('nombre, direccion, ciudad, aforo')
+        .eq('id', LOCAL_ID)
+        .maybeSingle(); // no falla si no existe la fila
+      if (!error && data) {
+        setFormData({
+          nombre:   data.nombre    || cached.nombre,
+          direccion: data.direccion || cached.direccion,
+          ciudad:   data.ciudad    || cached.ciudad,
+          aforo:    data.aforo     || cached.aforo,
+        });
+      }
     } catch (err) {
-      console.error('Error fetching local data:', err);
-      setToast('Error al cargar datos del local');
+      console.warn('Supabase no disponible, usando caché local:', err.message);
     } finally {
       setLoading(false);
     }
   };
 
   const handleSave = async () => {
+    if (!formData.nombre.trim()) {
+      setToast('El nombre del local no puede estar vacío');
+      return;
+    }
     setSaving(true);
     try {
-      if (!supabase) throw new Error('Supabase no conectado');
-      const updateData = { nombre: formData.nombre, direccion: formData.direccion, ciudad: formData.ciudad, aforo: formData.aforo };
-
-      const { error } = await supabase.from('locales').update(updateData).eq('id', LOCAL_ID);
-      if (error) {
-        console.error('Supabase error:', error);
-        throw new Error(error.message || 'Error al guardar en Supabase');
-      }
+      // 1. Guardar SIEMPRE en localStorage primero (garantizado)
+      localStorage.setItem('barops_local_nombre',    formData.nombre);
+      localStorage.setItem('barops_local_direccion', formData.direccion);
+      localStorage.setItem('barops_local_ciudad',    formData.ciudad);
+      localStorage.setItem('barops_local_aforo',     formData.aforo);
+      // Actualizar también la clave que usa la sidebar
       localStorage.setItem('barops_local_name', formData.nombre);
       onLocalNameChange(formData.nombre);
-      setToast('Cambios guardados correctamente');
+
+      // 2. Intentar guardar en Supabase (best-effort, no bloquea)
+      if (supabase) {
+        const { error } = await supabase
+          .from('locales')
+          .upsert(
+            { id: LOCAL_ID, nombre: formData.nombre, direccion: formData.direccion, ciudad: formData.ciudad, aforo: parseInt(formData.aforo) || null },
+            { onConflict: 'id' }
+          );
+        if (error) {
+          console.warn('Supabase save warning (datos guardados localmente):', error.message);
+          setToast('Guardado localmente ✓  (Supabase: ' + error.message + ')');
+          return;
+        }
+      }
+
+      setToast('Cambios guardados correctamente ✓');
     } catch (err) {
-      console.error('Error saving local data:', err);
-      setToast(`Error: ${err.message || 'No se pudo guardar'}`);
+      console.error('Error saving:', err);
+      setToast('Guardado localmente ✓ (sin conexión a BD)');
     } finally {
       setSaving(false);
     }
   };
+
 
   const togglePref = (key) => {
     const newVal = !prefs[key];
@@ -2966,21 +2999,45 @@ function LocalDrawer({ isOpen, onClose, localName, onLocalNameChange }) {
   };
 
   const handleLogoUpload = async (file) => {
-    if (!file || !supabase) return;
-    
+    if (!file) {
+      setToast('Selecciona una imagen');
+      return;
+    }
+
+    if (!supabase) {
+      setToast('Supabase no conectado');
+      console.error('Supabase client not initialized');
+      return;
+    }
+
     try {
+      // Read file as data URL for immediate preview
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setLogoPreview(e.target.result);
+      };
+      reader.readAsDataURL(file);
+
       const ext = file.name.split('.').pop();
       const filename = `${LOCAL_ID}-logo-${Date.now()}.${ext}`;
-      
-      const { error } = await supabase.storage.from('logos').upload(filename, file, { upsert: true });
-      if (error) throw error;
-      
+
+      // Upload to storage with proper error handling
+      const { data, error } = await supabase.storage
+        .from('logos')
+        .upload(filename, file, { upsert: true });
+
+      if (error) {
+        console.error('Storage upload error:', error);
+        setToast(`Error: ${error.message}`);
+        return;
+      }
+
+      // Save filename to perfil state (will be saved to DB on handleSavePerfil)
       setPerfil(p => ({...p, logo_filename: filename}));
-      setLogoPreview(getPublicLogoUrl(filename));
-      setToast('Logo subido correctamente');
+      setToast('Logo subido ✓');
     } catch (err) {
       console.error('Error uploading logo:', err);
-      setToast('Error al subir logo');
+      setToast(`Error: ${err.message || 'Error al subir logo'}`);
     }
   };
 
@@ -2988,16 +3045,37 @@ function LocalDrawer({ isOpen, onClose, localName, onLocalNameChange }) {
     setSaving(true);
     try {
       if (!supabase) throw new Error('Supabase no conectado');
-      const { error } = await supabase.from('locales').update(perfil).eq('id', LOCAL_ID);
-      if (error) throw error;
-      
+
+      // Prepare update data - only include fields that exist in DB
+      const updateData = {
+        nombre: perfil.nombre,
+        tipo: perfil.tipo,
+        direccion: perfil.direccion,
+        ciudad: perfil.ciudad,
+        telefono: perfil.telefono,
+        email: perfil.email,
+        aforo: perfil.aforo,
+        logo_filename: perfil.logo_filename || null
+      };
+
+      const { data, error } = await supabase
+        .from('locales')
+        .update(updateData)
+        .eq('id', LOCAL_ID)
+        .select();
+
+      if (error) {
+        console.error('Database error:', error);
+        throw new Error(error.message || 'Error al guardar en base de datos');
+      }
+
       localStorage.setItem('barops_config', JSON.stringify(operativo));
       localStorage.setItem('barops_local_name', perfil.nombre);
       onLocalNameChange(perfil.nombre);
       setToast('Cambios guardados ✓');
     } catch (err) {
       console.error('Error saving perfil:', err);
-      setToast('Error al guardar cambios');
+      setToast(`Error: ${err.message || 'Error al guardar cambios'}`);
     } finally {
       setSaving(false);
     }
@@ -3212,36 +3290,31 @@ export default function BarOps() {
   const [screen, setScreen]       = useState(initialScreen);
   const [customIngs, setCustomIngs] = useState([]);
   const [customInv,  setCustomInv]  = useState([]);
-  const [localName, setLocalName] = useState(localStorage.getItem('barops_local_name') || 'Paradiso Cocktail Bar');
+  const [localName, setLocalName] = useState(
+    localStorage.getItem('barops_local_nombre') ||
+    localStorage.getItem('barops_local_name') ||
+    'Mi Local'
+  );
   const [showLocalDrawer, setShowLocalDrawer] = useState(false);
 
   const [inventoryLoading, setInventoryLoading] = useState(true);
 
+  // Sincroniza el nombre del local desde Supabase (best-effort, localStorage manda)
   const fetchLocalName = async () => {
     try {
       if (!supabase) return;
-
-      // Asegurar que existe la fila del local — si no existe, la crea con el nombre guardado
-      const savedName = localStorage.getItem('barops_local_name') || 'Mi Local';
-      await supabase.from('locales').upsert(
-        { id: '00000000-0000-0000-0000-000000000001', nombre: savedName },
-        { onConflict: 'id', ignoreDuplicates: true }
-      );
-
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('locales')
         .select('nombre')
         .eq('id', '00000000-0000-0000-0000-000000000001')
-        .single();
-
-      if (error) throw error;
+        .maybeSingle();
       if (data?.nombre) {
         setLocalName(data.nombre);
+        localStorage.setItem('barops_local_nombre', data.nombre);
         localStorage.setItem('barops_local_name', data.nombre);
       }
     } catch (err) {
-      console.error('Error fetching local name:', err);
-      // En caso de error, el localStorage ya tiene el valor correcto
+      // localStorage ya tiene el valor correcto
     }
   };
 
