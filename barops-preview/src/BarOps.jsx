@@ -2651,6 +2651,7 @@ function Local({ localName, onLocalNameChange }) {
         console.error('Supabase error:', error);
         throw new Error(error.message || 'Error al guardar en Supabase');
       }
+      localStorage.setItem('barops_local_name', formData.nombre);
       onLocalNameChange(formData.nombre);
       setToast('Cambios guardados correctamente');
     } catch (err) {
@@ -2824,7 +2825,7 @@ export default function BarOps() {
   const [screen, setScreen]       = useState(initialScreen);
   const [customIngs, setCustomIngs] = useState([]);
   const [customInv,  setCustomInv]  = useState([]);
-  const [localName, setLocalName]  = useState('Paradiso Cocktail Bar');
+  const [localName, setLocalName] = useState(localStorage.getItem('barops_local_name') || 'Paradiso Cocktail Bar');
 
   const [inventoryLoading, setInventoryLoading] = useState(true);
 
