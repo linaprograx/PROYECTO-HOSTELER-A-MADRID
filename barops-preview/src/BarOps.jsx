@@ -2550,14 +2550,16 @@ export default function BarOps() {
 
   const addFromImport = async (items) => {
     if (!supabase) return { success: false, error: "Supabase no conectado" };
-    
+
+    const localId = '00000000-0000-0000-0000-000000000001';
+
     // Map parsed items to Supabase schema
     const supabaseItems = items.map(item => ({
-      local_id: null, // Dummy null since auth is not implemented yet
+      local_id: localId,
       nombre: item.name,
       categoria: item.cat,
       unidad: item.unit,
-      stock_actual: parseFloat(item.stock) || 0,
+      stock_actual: item.pct || 0,
       stock_minimo: 0,
       coste_unitario: item.cpu
     }));
@@ -2565,11 +2567,11 @@ export default function BarOps() {
     try {
       const { error } = await supabase
         .from('productos')
-        .upsert(supabaseItems, { onConflict: 'local_id,nombre', ignoreDuplicates: false });
-      
+        .upsert(supabaseItems, { onConflict: 'nombre,local_id' });
+
       if (error) throw error;
-      
-      await fetchInventory(); // Reload from DB
+
+      await fetchInventory();
       return { success: true };
     } catch (err) {
       console.error(err);
