@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useContext } from 'react';
+import { supabase } from './supabaseClient';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -1014,8 +1015,20 @@ function ImportModal({ onClose }) {
 
   const removeItem = (id) => setParsed(p => p.filter(x => x.id !== id));
 
-  const handleConfirm = () => {
-    addFromImport(parsed); onClose();
+  const [isImporting, setIsImporting] = useState(false);
+
+  const handleConfirm = async () => {
+    setIsImporting(true);
+    setParseErr('');
+    try {
+      const res = await addFromImport(parsed);
+      if (!res.success) throw new Error(res.error);
+      onClose();
+    } catch (err) {
+      setParseErr(err.message);
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const downloadTemplate = () => {
@@ -1159,13 +1172,13 @@ function ImportModal({ onClose }) {
 
 // ─── SCREEN 2: INVENTARIO ─────────────────────────────────────────────────────
 function Inventario() {
-  const { customInv = [] } = useApp() || {};
+  const { customInv = [], inventoryLoading = false } = useApp() || {};
   const [filter, setFilter]       = useState('all');
   const [toast, setToast]         = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [consumptionModal, setConsumptionModal] = useState(null);
   const [customConsumption, setCustomConsumption] = useState({});
-  const allItems = [...INVENTORY, ...customInv];
+  const allItems = [...customInv];
   const FILTERS = [{ id:'all',label:'TODOS' },{ id:'critical',label:'EN RIESGO' },{ id:'medium',label:'PREVENTIVO' },{ id:'stable',label:'ESTABLE' }];
   const visible = filter==='all'?allItems:allItems.filter(i=>i.risk===filter);
 
@@ -1173,6 +1186,28 @@ function Inventario() {
     setCustomConsumption(p=>({...p,[itemId]:weekly}));
     setToast(`Consumo de ${allItems.find(x=>x.id===itemId)?.name} actualizado a ${weekly}/semana`);
   };
+  if (inventoryLoading) {
+    return (
+      <div style={{ flex:1, padding:'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
+        <div style={{ color:C.teal, fontSize:'14px', letterSpacing:'2px' }}>CARGANDO INVENTARIO...</div>
+      </div>
+    );
+  }
+
+  if (customInv.length === 0) {
+    return (
+      <div style={{ flex:1, padding:'28px 32px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:F }}>
+        {showImport&&<ImportModal onClose={()=>setShowImport(false)}/>}
+        <Package size={48} color={C.textSec} style={{ marginBottom: 16 }} />
+        <h2 style={{ color:C.text, fontSize:'20px', letterSpacing:'2px', marginBottom:8 }}>INVENTARIO VACÍO</h2>
+        <p style={{ color:C.textSec, fontSize:'13px', marginBottom:24 }}>No hay productos registrados en la base de datos.</p>
+        <Btn variant="primary" onClick={()=>setShowImport(true)} sx={{ padding:'12px 24px', fontSize:'11px', letterSpacing:'2px' }}>
+          IMPORTAR INVENTARIO INICIAL
+        </Btn>
+      </div>
+    );
+  }
+
   return (
     <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
       {toast&&<Toast msg={toast} onClose={()=>setToast(null)}/>}
@@ -1183,7 +1218,6 @@ function Inventario() {
           <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INVENTARIO INTELIGENTE</h1>
           <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
             Predicción de stock con IA — {allItems.length} referencias monitorizadas
-            {customInv.length>0&&<span style={{ color:C.teal }}> · {customInv.length} importadas</span>}
           </p>
         </div>
         <Btn variant="outline" onClick={()=>setShowImport(true)} sx={{ padding:'9px 18px', fontSize:'10px', letterSpacing:'2px' }}>
@@ -2474,20 +2508,76 @@ export default function BarOps() {
   const [customIngs, setCustomIngs] = useState([]);
   const [customInv,  setCustomInv]  = useState([]);
 
-  const addFromImport = (items) => {
-    setCustomIngs(prev => {
-      const existingIds = new Set([...INGREDIENTS_DB, ...prev].map(x=>x.id));
-      const newIngs = items.filter(x=>!existingIds.has(x.id));
-      return [...prev, ...newIngs];
-    });
-    setCustomInv(prev => {
-      const existingIds = new Set([...INVENTORY, ...prev].map(x=>x.id));
-      const newInv = items.filter(x=>!existingIds.has(x.id));
-      return [...prev, ...newInv];
-    });
+  const [inventoryLoading, setInventoryLoading] = useState(true);
+
+  const fetchInventory = async () => {
+    setInventoryLoading(true);
+    try {
+      if (!supabase) throw new Error("Supabase client not initialized");
+      const { data, error } = await supabase.from('productos').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      
+      const mapped = data.map(dbItem => {
+        const stockQty = parseFloat(dbItem.stock_actual) || 0;
+        let pct = Math.min(100, Math.round(stockQty * 10)); 
+        let days = Math.min(90, Math.round(stockQty * 5));
+        
+        return {
+          id: dbItem.id,
+          name: dbItem.nombre,
+          cat: dbItem.categoria,
+          stock: `${stockQty} ${dbItem.unidad}`,
+          unit: dbItem.unidad,
+          cpu: dbItem.coste_unitario,
+          cost: `€${parseFloat(dbItem.coste_unitario).toFixed(2)}/${dbItem.unidad}`,
+          pct,
+          days,
+          weekly: `~${Math.round(stockQty/2)} uds`,
+          risk: days <= 3 ? 'critical' : days <= 7 ? 'medium' : 'stable'
+        };
+      });
+      setCustomInv(mapped);
+    } catch (err) {
+      console.error('Error fetching inventory:', err);
+    } finally {
+      setInventoryLoading(false);
+    }
   };
 
-  const ctx = { customIngs, customInv, addFromImport };
+  useEffect(() => {
+    fetchInventory();
+  }, []);
+
+  const addFromImport = async (items) => {
+    if (!supabase) return { success: false, error: "Supabase no conectado" };
+    
+    // Map parsed items to Supabase schema
+    const supabaseItems = items.map(item => ({
+      local_id: null, // Dummy null since auth is not implemented yet
+      nombre: item.name,
+      categoria: item.cat,
+      unidad: item.unit,
+      stock_actual: parseFloat(item.stock) || 0,
+      stock_minimo: 0,
+      coste_unitario: item.cpu
+    }));
+
+    try {
+      const { error } = await supabase
+        .from('productos')
+        .upsert(supabaseItems, { onConflict: 'local_id,nombre', ignoreDuplicates: false });
+      
+      if (error) throw error;
+      
+      await fetchInventory(); // Reload from DB
+      return { success: true };
+    } catch (err) {
+      console.error(err);
+      return { success: false, error: err.message };
+    }
+  };
+
+  const ctx = { customIngs, customInv, addFromImport, inventoryLoading };
 
   const SCREENS = {
     dashboard:  <Dashboard/>,
