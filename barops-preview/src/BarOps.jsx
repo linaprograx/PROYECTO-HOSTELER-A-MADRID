@@ -582,7 +582,6 @@ function Sidebar({ active, setActive, localName }) {
     { id:'agente',     Icon:Bot,             label:'AGENTE IA'  },
     { id:'analytics',  Icon:BarChart2,       label:'ANALYTICS'  },
     { id:'carta',      Icon:BookOpen,        label:'CARTA'      },
-    { id:'local',      Icon:Store,           label:'LOCAL'      },
     { id:'pricing',    Icon:CreditCard,      label:'BILLING'    },
   ];
 
@@ -624,6 +623,13 @@ function Sidebar({ active, setActive, localName }) {
         })}
       </nav>
       <div style={{ padding:'16px 22px', borderTop:`1px solid ${C.border2}` }}>
+        <button onClick={() => setActive('local')} style={{ width:'100%', padding:'10px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, marginBottom:12, cursor:'pointer', transition:'all 0.2s', display:'flex', alignItems:'center', gap:10 }}>
+          <Store size={14} color={C.orange}/>
+          <div style={{ textAlign:'left', flex:1 }}>
+            <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px' }}>GESTIÓN</div>
+            <div style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'1.5px', fontWeight:700 }}>LOCAL</div>
+          </div>
+        </button>
         {(() => {
           const sub = localStorage.getItem('barops_subscription') ? JSON.parse(localStorage.getItem('barops_subscription')) : null;
           const bg = sub?.status==='active'?C.purpleBg:C.tealBg;
@@ -2582,7 +2588,7 @@ function PaymentSuccess() {
 
 // ─── SCREEN: LOCAL ────────────────────────────────────────────────────────────
 function Local({ localName, onLocalNameChange }) {
-  const [formData, setFormData] = useState({ nombre:'', direccion:'', ciudad:'', aforo:'' });
+  const [formData, setFormData] = useState({ nombre:'', direccion:'', ciudad:'', aforo:'', imagen:'' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
@@ -2621,13 +2627,19 @@ function Local({ localName, onLocalNameChange }) {
     setSaving(true);
     try {
       if (!supabase) throw new Error('Supabase no conectado');
-      const { error } = await supabase.from('locales').update(formData).eq('id', LOCAL_ID);
-      if (error) throw error;
+      const updateData = { nombre: formData.nombre, direccion: formData.direccion, ciudad: formData.ciudad, aforo: formData.aforo };
+      if (formData.imagen) updateData.imagen = formData.imagen;
+
+      const { error } = await supabase.from('locales').update(updateData).eq('id', LOCAL_ID);
+      if (error) {
+        console.error('Supabase error:', error);
+        throw new Error(error.message || 'Error al guardar en Supabase');
+      }
       onLocalNameChange(formData.nombre);
       setToast('Cambios guardados correctamente');
     } catch (err) {
       console.error('Error saving local data:', err);
-      setToast('Error al guardar cambios');
+      setToast(`Error: ${err.message || 'No se pudo guardar'}`);
     } finally {
       setSaving(false);
     }
@@ -2662,6 +2674,31 @@ function Local({ localName, onLocalNameChange }) {
         <Card sx={{ padding:24 }}>
           <h2 style={{ fontFamily:F, fontSize:'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px', marginBottom:18 }}>PERFIL DEL LOCAL</h2>
           <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ width:80, height:80, borderRadius:8, background:C.cardAlt, border:`2px dashed ${C.border2}`, margin:'0 auto 12px', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
+                {formData.imagen ? (
+                  <img src={formData.imagen} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+                ) : (
+                  <Store size={32} color={C.textSec}/>
+                )}
+              </div>
+              <label style={{ display:'inline-block', padding:'8px 16px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'10px', color:C.text, letterSpacing:'1px', fontWeight:700 }}>
+                SUBIR FOTO
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => setFormData(p=>({...p, imagen:ev.target?.result}));
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                  style={{ display:'none' }}
+                />
+              </label>
+            </div>
             <div>
               <label style={{ display:'block', fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>NOMBRE</label>
               <input
