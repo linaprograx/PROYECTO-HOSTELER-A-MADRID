@@ -567,6 +567,7 @@ function TypingDots() {
 function Sidebar({ active, setActive, localName }) {
   const [mobile, setMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [localPhoto, setLocalPhoto] = useState(localStorage.getItem('barops_local_photo') || '');
 
   useEffect(() => {
     const handleResize = () => setMobile(window.innerWidth < 1024);
@@ -596,12 +597,27 @@ function Sidebar({ active, setActive, localName }) {
         <div style={{ fontFamily:F, fontSize:'24px', fontWeight:700, color:C.orange, letterSpacing:'7px', lineHeight:1 }}>BAROPS</div>
         <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'3px', marginTop:5 }}>SISTEMA OPERATIVO</div>
       </div>
-      <div style={{ padding:'14px 22px 16px', borderBottom:`1px solid ${C.border}` }}>
-        <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>LOCAL</div>
-        <div style={{ fontFamily:F, fontSize:'13px', color:C.text, lineHeight:'1.35' }}>{localName}</div>
-        <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:8 }}>
-          <div style={{ width:7, height:7, borderRadius:'50%', background:C.teal, boxShadow:`0 0 8px ${C.teal}` }}/>
-          <span style={{ fontFamily:F, fontSize:'9px', color:C.teal, letterSpacing:'1.5px' }}>SISTEMA ACTIVO</span>
+      <div style={{ padding:'16px 14px', borderBottom:`1px solid ${C.border}`, background:`linear-gradient(135deg, ${C.card}44 0%, ${C.cardAlt}44 100%)` }}>
+        <div style={{ display:'flex', gap:12, alignItems:'flex-start' }}>
+          <div style={{
+            width:52, height:52, borderRadius:6, background:C.cardAlt, border:`2px solid ${C.orange}`,
+            display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', flexShrink:0,
+            boxShadow:`0 0 16px ${C.orange}33`
+          }}>
+            {localPhoto ? (
+              <img src={localPhoto} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+            ) : (
+              <Store size={24} color={C.orange}/>
+            )}
+          </div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontFamily:F, fontSize:'8px', color:C.textSec, letterSpacing:'2px', marginBottom:3 }}>LOCAL</div>
+            <div style={{ fontFamily:F, fontSize:'12px', color:C.text, lineHeight:'1.3', fontWeight:700, wordBreak:'break-word' }}>{localName}</div>
+            <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:6 }}>
+              <div style={{ width:5, height:5, borderRadius:'50%', background:C.teal, boxShadow:`0 0 6px ${C.teal}` }}/>
+              <span style={{ fontFamily:F, fontSize:'8px', color:C.teal, letterSpacing:'1px' }}>ACTIVO</span>
+            </div>
+          </div>
         </div>
       </div>
       <nav style={{ flex:1, padding:'10px 0' }}>
@@ -2588,10 +2604,11 @@ function PaymentSuccess() {
 
 // ─── SCREEN: LOCAL ────────────────────────────────────────────────────────────
 function Local({ localName, onLocalNameChange }) {
-  const [formData, setFormData] = useState({ nombre:'', direccion:'', ciudad:'', aforo:'', imagen:'' });
+  const [formData, setFormData] = useState({ nombre:'', direccion:'', ciudad:'', aforo:'' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const [localPhoto, setLocalPhoto] = useState(localStorage.getItem('barops_local_photo') || '');
   const [prefs, setPrefs] = useState({
     stockAlerts: JSON.parse(localStorage.getItem('barops_stock_alerts') || 'true'),
     shiftNotifs: JSON.parse(localStorage.getItem('barops_shift_notifs') || 'true'),
@@ -2628,7 +2645,6 @@ function Local({ localName, onLocalNameChange }) {
     try {
       if (!supabase) throw new Error('Supabase no conectado');
       const updateData = { nombre: formData.nombre, direccion: formData.direccion, ciudad: formData.ciudad, aforo: formData.aforo };
-      if (formData.imagen) updateData.imagen = formData.imagen;
 
       const { error } = await supabase.from('locales').update(updateData).eq('id', LOCAL_ID);
       if (error) {
@@ -2676,8 +2692,8 @@ function Local({ localName, onLocalNameChange }) {
           <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
             <div style={{ textAlign:'center' }}>
               <div style={{ width:80, height:80, borderRadius:8, background:C.cardAlt, border:`2px dashed ${C.border2}`, margin:'0 auto 12px', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
-                {formData.imagen ? (
-                  <img src={formData.imagen} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+                {localPhoto ? (
+                  <img src={localPhoto} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
                 ) : (
                   <Store size={32} color={C.textSec}/>
                 )}
@@ -2691,7 +2707,11 @@ function Local({ localName, onLocalNameChange }) {
                     const file = e.target.files?.[0];
                     if (file) {
                       const reader = new FileReader();
-                      reader.onload = (ev) => setFormData(p=>({...p, imagen:ev.target?.result}));
+                      reader.onload = (ev) => {
+                        const result = ev.target?.result;
+                        setLocalPhoto(result);
+                        localStorage.setItem('barops_local_photo', result);
+                      };
                       reader.readAsDataURL(file);
                     }
                   }}
