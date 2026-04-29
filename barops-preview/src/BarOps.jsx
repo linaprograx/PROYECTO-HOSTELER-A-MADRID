@@ -2401,33 +2401,65 @@ function PaymentSuccess() {
   }, [sessionId]);
 
   return (
-    <div style={{ flex:1, overflow:'auto', padding:'40px 60px', display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <div style={{ maxWidth:500, textAlign:'center' }}>
-        <div style={{ width:80, height:80, borderRadius:'50%', background:C.tealBg, border:`2px solid ${C.teal}`, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 32px' }}>
-          <CheckCircle size={40} color={C.teal}/>
-        </div>
-        <div style={{ fontFamily:F, fontSize:'32px', fontWeight:700, color:C.text, marginBottom:12 }}>¡Listo!</div>
-        <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, marginBottom:32, lineHeight:'1.8' }}>
-          Tu período de prueba de 14 días ha comenzado. Accede a todas las funciones de BarOps Pro ahora mismo.
-        </div>
-        <Card sx={{ padding:24, marginBottom:24, background:C.cardAlt, borderLeft:`4px solid ${C.teal}` }}>
-          <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>ESTADO DE SUSCRIPCIÓN</div>
-          <div style={{ fontFamily:F, fontSize:'18px', fontWeight:700, color:C.teal }}>EN PERÍODO DE PRUEBA</div>
-          <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginTop:8 }}>
-            Te recordaremos 1 día antes de que finalice el período
+    <div style={{ flex:1, overflow:'auto', padding:'40px 20px', display:'flex', alignItems:'center', justifyContent:'center', background: `radial-gradient(circle at center, ${C.cardAlt} 0%, ${C.bg} 100%)` }}>
+      <div style={{ maxWidth:600, width:'100%', textAlign:'center' }}>
+        
+        {/* Animated/Glowing Icon Area */}
+        <div style={{ position:'relative', width:100, height:100, margin:'0 auto 40px' }}>
+          <div style={{ position:'absolute', inset:0, background:C.orange, filter:'blur(30px)', opacity:0.2, borderRadius:'50%' }}></div>
+          <div style={{ position:'relative', width:'100%', height:'100%', borderRadius:'50%', background:`linear-gradient(135deg, ${C.card} 0%, ${C.cardAlt} 100%)`, border:`1px solid ${C.orange}44`, display:'flex', alignItems:'center', justifyContent:'center', boxShadow:`0 10px 30px rgba(0,0,0,0.5), inset 0 1px 1px ${C.orange}33` }}>
+            <Zap size={44} color={C.orange} strokeWidth={1.5} />
           </div>
-          {sessionId && (
-            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border2}` }}>
-              ID de sesión: <span style={{ fontFamily:'monospace' }}>{sessionId.slice(0,20)}...</span>
+        </div>
+
+        <div style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'4px', marginBottom:12, fontWeight:700 }}>VERIFICACIÓN COMPLETADA</div>
+        <div style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.text, marginBottom:20, letterSpacing:'-1px', textShadow:`0 2px 10px rgba(0,0,0,0.5)` }}>
+          Bienvenido a la Élite
+        </div>
+        
+        <div style={{ fontFamily:F, fontSize:'15px', color:C.textSec, marginBottom:40, lineHeight:'1.8', maxWidth:480, margin:'0 auto 40px' }}>
+          Tu local acaba de evolucionar. Has desbloqueado el sistema operativo definitivo para hostelería de alto rendimiento. <span style={{ color:C.text }}>Prepárate para tomar el control absoluto.</span>
+        </div>
+
+        {/* Digital Membership Card */}
+        <Card sx={{ padding:0, marginBottom:36, background:`linear-gradient(145deg, ${C.card} 0%, #111 100%)`, border:`1px solid ${C.border}`, position:'relative', overflow:'hidden', textAlign:'left' }}>
+          <div style={{ position:'absolute', top:0, left:0, width:4, bottom:0, background:C.orange }}></div>
+          <div style={{ position:'absolute', top:-50, right:-50, width:150, height:150, background:C.orange, filter:'blur(60px)', opacity:0.1 }}></div>
+          
+          <div style={{ padding:'24px 32px' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
+              <div>
+                <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>MEMBERSHIP STATUS</div>
+                <div style={{ fontFamily:F, fontSize:'18px', fontWeight:700, color:C.orange, letterSpacing:'1px' }}>BAROPS PRO ACCESSED</div>
+              </div>
+              <Badge label="ACTIVO" color={C.teal} bg={C.tealBg} />
             </div>
-          )}
+            
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, borderTop:`1px solid ${C.border2}`, paddingTop:20 }}>
+              <div>
+                <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>FASE ACTUAL</div>
+                <div style={{ fontFamily:F, fontSize:'13px', color:C.text, fontWeight:700 }}>14 DÍAS DE PRUEBA VIP</div>
+              </div>
+              <div>
+                <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>NIVEL DE ACCESO</div>
+                <div style={{ fontFamily:F, fontSize:'13px', color:C.text, fontWeight:700 }}>ILIMITADO (TIER 1)</div>
+              </div>
+            </div>
+            
+            {sessionId && (
+              <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, marginTop:20, paddingTop:16, borderTop:`1px solid ${C.border2}88`, letterSpacing:'1px', opacity:0.6 }}>
+                AUTH KEY: {sessionId.slice(0,24).toUpperCase()}...
+              </div>
+            )}
+          </div>
         </Card>
+
         <Btn
           variant="primary"
-          sx={{ width:'100%', justifyContent:'center', padding:'11px 28px' }}
+          sx={{ padding:'16px 40px', fontSize:'12px', letterSpacing:'3px', boxShadow:`0 4px 15px ${C.orange}44`, borderRadius:3 }}
           onClick={() => { window.location.href = '/'; }}
         >
-          IR AL DASHBOARD
+          INICIALIZAR SISTEMA
         </Btn>
       </div>
     </div>
