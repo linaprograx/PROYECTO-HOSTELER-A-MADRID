@@ -2567,7 +2567,10 @@ export default function BarOps() {
     try {
       const { error } = await supabase
         .from('productos')
-        .upsert(supabaseItems, { onConflict: 'nombre,local_id' });
+        .upsert(supabaseItems, {
+          onConflict: 'nombre,local_id',
+          ignoreDuplicates: false
+        });
 
       if (error) throw error;
 
