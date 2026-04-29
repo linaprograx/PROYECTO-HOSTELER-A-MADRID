@@ -9,7 +9,7 @@ import {
   AlertTriangle, CheckCircle, Clock, TrendingUp, TrendingDown,
   Send, HelpCircle, Plus, Bell, X, Zap,
   ShoppingCart, ChevronDown, ChevronUp, UserCheck,
-  BookOpen, Trash2, CreditCard, Store,
+  BookOpen, Trash2, CreditCard, Store, Settings,
 } from 'lucide-react';
 
 // ─── TOKENS ───────────────────────────────────────────────────────────────────
@@ -442,6 +442,35 @@ function parseCSV(raw) {
   return { ok:true, items:results, errors };
 }
 
+
+// ─── HELPER FUNCTIONS ─────────────────────────────────────────────────────────
+const getInitials = (name) => {
+  if (!name) return '?';
+  return name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+};
+
+const generateCSV = (headers, rows) => {
+  const csv = [headers, ...rows].map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
+  return csv;
+};
+
+const downloadCSV = (csv, filename) => {
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+};
+
+const formatDateISO = (date = new Date()) => date.toISOString().split('T')[0];
+
+const getPublicLogoUrl = (filename) => {
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+  if (!filename) return null;
+  return `${SUPABASE_URL}/storage/v1/object/public/logos/${filename}`;
+};
+
 // ─── ATOMS ────────────────────────────────────────────────────────────────────
 function Badge({ label, color, bg }) {
   return (
@@ -564,7 +593,7 @@ function TypingDots() {
 }
 
 // ─── SIDEBAR ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, setActive, localName }) {
+function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
   const [mobile, setMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [localPhoto, setLocalPhoto] = useState(localStorage.getItem('barops_local_photo') || '');
@@ -639,7 +668,7 @@ function Sidebar({ active, setActive, localName }) {
         })}
       </nav>
       <div style={{ padding:'16px 22px', borderTop:`1px solid ${C.border2}` }}>
-        <button onClick={() => setActive('local')} style={{ width:'100%', padding:'10px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, marginBottom:12, cursor:'pointer', transition:'all 0.2s', display:'flex', alignItems:'center', gap:10 }}>
+        <button onClick={() => onOpenLocalSettings?.()} style={{ width:'100%', padding:'10px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, marginBottom:12, cursor:'pointer', transition:'all 0.2s', display:'flex', alignItems:'center', gap:10 }}>
           <Store size={14} color={C.orange}/>
           <div style={{ textAlign:'left', flex:1 }}>
             <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px' }}>GESTIÓN</div>
@@ -697,27 +726,78 @@ function Sidebar({ active, setActive, localName }) {
 }
 
 // ─── SCREEN 1: DASHBOARD ──────────────────────────────────────────────────────
+
+// ─── SCREEN 1: DASHBOARD ──────────────────────────────────────────────────────
 function Dashboard() {
   const [toast, setToast] = useState(null);
-  const [chatInput, setChatInput] = useState('');
-  const [staffingOpen, setStaffingOpen] = useState(false);
-  const KPIS = [
-    { label:'MERMA ESTIMADA MES', value:'€710',   sub:'−66% vs nov. 2025',  color:C.teal,   Icon:TrendingDown, bg:C.tealBg    },
-    { label:'STOCK EN RIESGO',    value:'3 REF.',  sub:'Nivel: CRÍTICO',      color:'#EF4444',Icon:AlertTriangle,bg:'#EF444415' },
-    { label:'TURNOS CUBIERTOS',   value:'7 / 10',  sub:'70% de cobertura',   color:C.orange, Icon:CheckCircle,  bg:C.orangeBg  },
-    { label:'AHORRO GENERADO',    value:'€1.140',  sub:'ROI: 5.7× este mes', color:C.amber,  Icon:TrendingUp,   bg:C.amberBg   },
-  ];
+  const [loading, setLoading] = useState(true);
+  const [kpis, setKpis] = useState([
+    { label:'REFERENCIAS EN INVENTARIO', value:0, sub:'productos activos', color:C.teal, Icon:Package, bg:C.tealBg },
+    { label:'STOCK EN RIESGO', value:0, sub:'productos críticos', color:'#EF4444', Icon:AlertTriangle, bg:'#EF444415' },
+    { label:'VALOR TOTAL INVENTARIO', value:'€0', sub:'stock valorizado', color:C.orange, Icon:TrendingUp, bg:C.orangeBg },
+    { label:'PRODUCTOS SIN STOCK', value:0, sub:'necesitan reposición', color:C.amber, Icon:Package, bg:C.amberBg },
+  ]);
+  const [criticalProducts, setCriticalProducts] = useState([]);
+  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const fetchDashboardData = async () => {
+    try {
+      if (!supabase) throw new Error('Supabase no conectado');
+      const { data:products, error } = await supabase.from('productos').select('*').eq('local_id', LOCAL_ID);
+      if (error) throw error;
+
+      if (!products || products.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const totalRefs = products.length;
+      const criticalCount = products.filter(p => parseFloat(p.stock_actual || 0) <= parseFloat(p.stock_minimo || 0)).length;
+      const totalValue = products.reduce((sum, p) => sum + (parseFloat(p.stock_actual || 0) * parseFloat(p.coste_unitario || 0)), 0);
+      const zeroStockCount = products.filter(p => parseFloat(p.stock_actual || 0) === 0).length;
+
+      setKpis([
+        { label:'REFERENCIAS EN INVENTARIO', value:totalRefs, sub:'productos activos', color:C.teal, Icon:Package, bg:C.tealBg },
+        { label:'STOCK EN RIESGO', value:`${criticalCount} REF.`, sub:'Nivel: ' + (criticalCount > 0 ? 'CRÍTICO' : 'OK'), color:criticalCount > 0 ? '#EF4444' : C.teal, Icon:AlertTriangle, bg:criticalCount > 0 ? '#EF444415' : C.tealBg },
+        { label:'VALOR TOTAL INVENTARIO', value:`€${totalValue.toFixed(2)}`, sub:'stock valorizado', color:C.orange, Icon:TrendingUp, bg:C.orangeBg },
+        { label:'PRODUCTOS SIN STOCK', value:zeroStockCount, sub:'necesitan reposición', color:C.amber, Icon:Package, bg:C.amberBg },
+      ]);
+
+      const criticals = products
+        .map(p => ({...p, diff: parseFloat(p.stock_actual || 0) - parseFloat(p.stock_minimo || 0)}))
+        .filter(p => p.diff < 0)
+        .sort((a,b) => a.diff - b.diff)
+        .slice(0,5);
+      setCriticalProducts(criticals);
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+      setToast('Error al cargar datos del dashboard');
+      setLoading(false);
+    }
+  };
+
   const CHIPS = ['¿Qué me va a faltar este finde?','¿Cuánto me cuesta un Negroni real?','Necesito un bartender mañana'];
-  const alertItems = INVENTORY.filter(i=>i.risk!=='stable');
-  const dashShifts = [...OPEN_SHIFTS.slice(0,2), ...COVERED_SHIFTS.slice(0,4)];
+
+  if (loading) {
+    return (
+      <div style={{ flex:1, padding:'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
+        <div style={{ color:C.teal, fontSize:'14px', letterSpacing:'2px' }}>CARGANDO...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
-      {toast&&<Toast msg={toast} onClose={()=>setToast(null)}/>}
+      {toast && <Toast msg={toast} onClose={()=>setToast(null)}/>}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:28 }}>
         <div>
           <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>DASHBOARD</h1>
-          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Paradiso Cocktail Bar — Lunes, 28 de Abril de 2026</p>
+          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Paradiso Cocktail Bar — {new Date().toLocaleDateString('es-ES', {weekday:'long', year:'numeric', month:'long', day:'numeric'})}</p>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:12 }}>
           <Bell size={15} color={C.textSec} style={{ cursor:'pointer' }}/>
@@ -728,7 +808,7 @@ function Dashboard() {
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
-        {KPIS.map(({ label,value,sub,color,Icon,bg },i)=>(
+        {kpis.map(({ label,value,sub,color,Icon,bg },i)=>(
           <Card key={i} accent={color} sx={{ padding:20, background:bg }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
               <div>
@@ -742,98 +822,42 @@ function Dashboard() {
         ))}
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:staffingOpen?'1fr 1fr':'1fr', gap:14, marginBottom:16, transition:'all 0.3s' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:14, marginBottom:16 }}>
         <Card sx={{ padding:20 }}>
           <SLabel label="ALERTAS DE INVENTARIO" color={C.orange} icon={AlertTriangle}/>
           <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-            {alertItems.map(item=>(
-              <div key={item.id} style={{
-                display:'flex', alignItems:'center', justifyContent:'space-between',
-                padding:'10px 12px', background:C.cardAlt,
-                border:`1px solid ${item.risk==='critical'?'#EF444433':C.amber+'33'}`, borderRadius:3,
-              }}>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:'13px', color:C.text, fontWeight:700, marginBottom:3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.name}</div>
-                  <div style={{ display:'flex', gap:10 }}>
-                    <span style={{ fontSize:'11px', color:C.textSec }}>Stock: {item.stock}</span>
-                    <span style={{ fontSize:'11px', color:item.days<=3?'#EF4444':C.amber, fontWeight:700 }}>{item.days}d restantes</span>
+            {criticalProducts.length > 0 ? (
+              criticalProducts.map((item,i) => (
+                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 0', borderBottom:`1px solid ${C.border2}` }}>
+                  <div>
+                    <div style={{ fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>{item.nombre}</div>
+                    <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>Stock: {item.stock_actual} {item.unidad} (mín: {item.stock_minimo})</div>
                   </div>
+                  <div style={{ padding:'4px 10px', background:'#EF444420', border:`1px solid #EF4444`, borderRadius:3, fontFamily:F, fontSize:'9px', color:'#EF4444', fontWeight:700 }}>CRÍTICO</div>
                 </div>
-                <div style={{ display:'flex', gap:8, alignItems:'center', marginLeft:10 }}>
-                  <RiskBadge risk={item.risk}/>
-                  <Btn onClick={()=>setToast(`Pedido de ${item.name} enviado al proveedor`)}>PEDIR YA</Btn>
-                </div>
-              </div>
-            ))}
+              ))
+            ) : (
+              <div style={{ padding:'16px 0', textAlign:'center', color:C.teal, fontFamily:F, fontSize:'12px' }}>Todo el inventario en niveles correctos ✓</div>
+            )}
           </div>
         </Card>
-
-        {staffingOpen&&(
-        <Card sx={{ padding:20 }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
-            <SLabel label="TURNOS ACTIVOS" color={C.teal} icon={Clock} style={{margin:0}}/>
-            <button onClick={()=>setStaffingOpen(false)} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec, display:'flex' }}>
-              <X size={16}/>
-            </button>
-          </div>
-          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-            {dashShifts.map(s=>(
-              <div key={s.id} style={{
-                display:'flex', alignItems:'center', justifyContent:'space-between',
-                padding:'10px 12px', background:C.cardAlt,
-                border:`1px solid ${s.status==='urgent'?'#EF444433':s.status==='searching'?C.amber+'33':C.border}`,
-                borderRadius:3,
-              }}>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:'11px', color:C.textSec, marginBottom:2 }}>{s.date} · {s.time}</div>
-                  <div style={{ fontSize:'13px', color:C.text, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.profile}</div>
-                  {s.pro&&<div style={{ fontSize:'11px', color:C.teal, marginTop:2 }}>→ {s.pro}</div>}
-                </div>
-                <ShiftBadge status={s.status}/>
-              </div>
-            ))}
-          </div>
-        </Card>
-        )}
-
-        {!staffingOpen&&(
-        <Card sx={{ padding:20, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:200, cursor:'pointer' }} onClick={()=>setStaffingOpen(true)}>
-          <Clock size={40} color={C.teal} style={{ opacity:0.5, marginBottom:12 }}/>
-          <div style={{ fontSize:'11px', color:C.textSec, letterSpacing:'2px', marginBottom:8, textAlign:'center' }}>GESTIÓN DE TURNOS</div>
-          <div style={{ fontSize:'13px', color:C.teal, fontWeight:700, letterSpacing:'1px' }}>7 / 10 CUBIERTOS</div>
-          <div style={{ fontSize:'10px', color:C.textSec, marginTop:8, textAlign:'center' }}>Haz click para expandir y<br/>asignar personal</div>
-        </Card>
-        )}
       </div>
 
-      <Card accent={C.orange} sx={{ padding:20 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
-          <Bot size={15} color={C.orange}/>
-          <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>AGENTE BAROPS</span>
-          <span style={{ padding:'2px 8px', background:C.tealBg, border:`1px solid ${C.teal}33`, borderRadius:2, fontFamily:F, fontSize:'9px', color:C.teal, letterSpacing:'1.5px' }}>EN LÍNEA</span>
-        </div>
-        <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
-          {CHIPS.map((chip,i)=>(
-            <button key={i} onClick={()=>setChatInput(chip)} style={{ padding:'5px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'12px', color:C.textSec, cursor:'pointer' }}>
-              {chip}
+      <Card sx={{ padding:20 }}>
+        <SLabel label="ASISTENTE IA" color={C.purple} icon={Bot}/>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginTop:14 }}>
+          {CHIPS.map((c,i) => (
+            <button key={i} onClick={() => setToast('Abriendo chat IA...')} style={{ padding:'8px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'10px', color:C.textSec, transition:'all 0.2s' }}>
+              {c}
             </button>
           ))}
-        </div>
-        <div style={{ display:'flex', gap:10 }}>
-          <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&setChatInput('')}
-            placeholder="Pregunta lo que necesites sobre tu negocio..."
-            style={{ flex:1, padding:'10px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none' }}
-          />
-          <Btn onClick={()=>setChatInput('')} sx={{ padding:'10px 20px', fontSize:'11px' }}>
-            <Send size={13}/> ENVIAR
-          </Btn>
         </div>
       </Card>
     </div>
   );
 }
 
-// ─── IMPORT COCKTAILS MODAL ──────────────────────────────────────────────────
+
 function ImportCocktailsModal({ onClose, onSave }) {
   const [step, setStep] = useState(1);
   const [raw, setRaw] = useState('');
@@ -1770,92 +1794,146 @@ function AgenteIA() {
 // ─── SCREEN 5: ANALYTICS ──────────────────────────────────────────────────────
 const TT_STYLE = { background:C.card, border:`1px solid #333`, fontFamily:F, fontSize:'11px', borderRadius:3, color:C.text };
 
+
+// ─── SCREEN 5: ANALYTICS ──────────────────────────────────────────────────────
 function Analytics() {
+  const [loading, setLoading] = useState(true);
+  const [categoryData, setCategoryData] = useState([]);
+  const [topProducts, setTopProducts] = useState([]);
+  const [riskProducts, setRiskProducts] = useState([]);
+  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
+
+  useEffect(() => {
+    fetchAnalyticsData();
+  }, []);
+
+  const fetchAnalyticsData = async () => {
+    try {
+      if (!supabase) throw new Error('Supabase no conectado');
+      const { data:products, error } = await supabase.from('productos').select('*').eq('local_id', LOCAL_ID);
+      if (error) throw error;
+
+      if (!products || products.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const catMap = {};
+      const topByValue = [];
+
+      products.forEach(p => {
+        const cat = p.categoria || 'Sin categoría';
+        catMap[cat] = (catMap[cat] || 0) + 1;
+        const value = parseFloat(p.stock_actual || 0) * parseFloat(p.coste_unitario || 0);
+        if (value > 0) topByValue.push({...p, value});
+      });
+
+      const catData = Object.entries(catMap).map(([n,v]) => ({n, v})).sort((a,b) => b.v - a.v);
+      setCategoryData(catData);
+
+      const top10 = topByValue.sort((a,b) => b.value - a.value).slice(0,10);
+      setTopProducts(top10);
+
+      const risk = products.filter(p => parseFloat(p.stock_actual || 0) <= parseFloat(p.stock_minimo || 0));
+      setRiskProducts(risk);
+
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching analytics:', err);
+      setLoading(false);
+    }
+  };
+
+  const TT_STYLE = { background:C.card, border:`1px solid #333`, fontFamily:F, fontSize:'11px', borderRadius:3, color:C.text };
+
+  if (loading) {
+    return (
+      <div style={{ flex:1, padding:'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
+        <div style={{ color:C.teal, fontSize:'14px', letterSpacing:'2px' }}>CARGANDO...</div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
       <div style={{ marginBottom:28 }}>
         <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INTELIGENCIA DE NEGOCIO</h1>
-        <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Análisis de rendimiento — Paradiso Cocktail Bar · Nov 2025 – Abr 2026</p>
+        <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Análisis de rendimiento — Paradiso Cocktail Bar</p>
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:22 }}>
-        <Card accent={C.teal} sx={{ padding:26, background:C.tealBg }}>
-          <div style={{ fontSize:'10px', color:C.teal, letterSpacing:'2.5px', fontWeight:700, marginBottom:10 }}>AHORRO ACUMULADO CON BAROPS</div>
-          <div style={{ fontSize:'46px', color:C.teal, fontWeight:700, letterSpacing:'2px', lineHeight:1 }}>€7.240</div>
-          <div style={{ fontSize:'12px', color:C.textSec, marginTop:10 }}>Desde noviembre 2025 · 6 meses de uso</div>
-          <div style={{ fontSize:'12px', color:C.teal, marginTop:5 }}>↓ Merma reducida: €2.000/mes → €710/mes actual</div>
-        </Card>
-        <Card accent={C.orange} sx={{ padding:26, background:C.orangeBg }}>
-          <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:10 }}>ROI DE BAROPS ESTE MES</div>
-          <div style={{ fontSize:'46px', color:C.orange, fontWeight:700, letterSpacing:'2px', lineHeight:1 }}>5.7×</div>
-          <div style={{ fontSize:'12px', color:C.textSec, marginTop:10 }}>Coste BarOps: €199/mes · Ahorro: €1.140/mes</div>
-          <div style={{ fontSize:'12px', color:C.orange, marginTop:5 }}>→ €941 beneficio neto mensual vs no tener BarOps</div>
-        </Card>
-      </div>
+      
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:18, marginBottom:22 }}>
         <Card sx={{ padding:20 }}>
-          <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>EVOLUCIÓN MERMA MENSUAL (€)</div>
-          <ResponsiveContainer width="100%" height={210}>
-            <LineChart data={MERMA_DATA}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.border2}/>
-              <XAxis dataKey="m" stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
-              <YAxis stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
-              <Tooltip contentStyle={TT_STYLE} labelStyle={{ color:C.text }}/>
-              <Legend wrapperStyle={{ fontFamily:F, fontSize:'10px', paddingTop:'10px' }}/>
-              <Line type="monotone" dataKey="antes" stroke="#EF4444" strokeWidth={2} dot={{ fill:'#EF4444',r:4 }} name="Sin BarOps"/>
-              <Line type="monotone" dataKey="despues" stroke={C.teal} strokeWidth={2} dot={{ fill:C.teal,r:4 }} name="Con BarOps"/>
-            </LineChart>
-          </ResponsiveContainer>
+          <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>DISTRIBUCIÓN POR CATEGORÍA</div>
+          {categoryData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={210}>
+              <BarChart data={categoryData}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border2}/>
+                <XAxis dataKey="n" stroke={C.border2} tick={{ fontFamily:F, fontSize:9, fill:C.textSec }}/>
+                <YAxis stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
+                <Tooltip contentStyle={TT_STYLE} labelStyle={{ color:C.text }}/>
+                <Bar dataKey="v" fill={C.purple} radius={[2,2,0,0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ height:210, display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec }}>Sin datos</div>
+          )}
         </Card>
+
         <Card sx={{ padding:20 }}>
-          <div style={{ fontSize:'10px', color:C.purple, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>CONSUMO POR CATEGORÍA — ABRIL (€)</div>
-          <ResponsiveContainer width="100%" height={210}>
-            <BarChart data={CAT_DATA}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.border2}/>
-              <XAxis dataKey="n" stroke={C.border2} tick={{ fontFamily:F, fontSize:9, fill:C.textSec }}/>
-              <YAxis stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
-              <Tooltip contentStyle={TT_STYLE} labelStyle={{ color:C.text }}/>
-              <Bar dataKey="v" fill={C.purple} radius={[2,2,0,0]} name="Consumo €"/>
-            </BarChart>
-          </ResponsiveContainer>
+          <div style={{ fontSize:'10px', color:C.teal, letterSpacing:'2.5px', fontWeight:700, marginBottom:12 }}>TOP 10 PRODUCTOS POR VALOR</div>
+          {topProducts.length > 0 ? (
+            <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight:210, overflowY:'auto' }}>
+              {topProducts.map((p,i) => (
+                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:`1px solid ${C.border2}`, fontSize:'11px' }}>
+                  <div style={{ flex:1 }}>
+                    <div style={{ color:C.text, fontWeight:700 }}>#{i+1} {p.nombre}</div>
+                    <div style={{ color:C.textSec, fontSize:'9px' }}>{p.categoria || '-'}</div>
+                  </div>
+                  <div style={{ color:C.teal, fontWeight:700, textAlign:'right' }}>€{p.value.toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ height:210, display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec }}>Sin productos con valor</div>
+          )}
         </Card>
       </div>
-      <Card sx={{ overflow:'hidden' }}>
-        <div style={{ padding:'16px 20px', borderBottom:`1px solid ${C.border2}`, display:'flex', alignItems:'center', gap:8 }}>
-          <TrendingUp size={13} color={C.amber}/>
-          <span style={{ fontFamily:F, fontSize:'10px', color:C.amber, letterSpacing:'2.5px', fontWeight:700 }}>TOP 10 PRODUCTOS POR RENTABILIDAD — ABRIL 2026</span>
-        </div>
-        <table style={{ width:'100%', borderCollapse:'collapse' }}>
-          <thead>
-            <tr style={{ background:C.cardAlt, borderBottom:`1px solid ${C.border2}` }}>
-              {['#','PRODUCTO','CATEGORÍA','COSTE REAL','PRECIO CARTA','MARGEN REAL','UNIDADES/MES'].map(h=>(
-                <th key={h} style={{ padding:'11px 16px', textAlign:'left', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {TOP_PRODUCTS.map((p,i)=>{
-              const mg=parseFloat(p.margin);
-              const mc=mg>87?C.teal:mg>80?C.amber:'#EF4444';
-              return (
-                <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
-                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'11px', color:C.textSec }}>#{i+1}</td>
-                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'13px', color:C.text, fontWeight:i<3?700:400 }}>{p.name}</td>
-                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'11px', color:C.textSec }}>{p.cat}</td>
-                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'12px', color:C.textSec }}>{p.cost}</td>
-                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.price}</td>
-                  <td style={{ padding:'12px 16px' }}><span style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:mc }}>{p.margin}</span></td>
-                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'12px', color:C.textSec }}>{p.units}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+
+      <Card sx={{ padding:20 }}>
+        <div style={{ fontSize:'10px', color:C.red, letterSpacing:'2.5px', fontWeight:700, marginBottom:16 }}>⚠ PRODUCTOS EN RIESGO</div>
+        {riskProducts.length > 0 ? (
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead>
+              <tr style={{ background:C.cardAlt, borderBottom:`1px solid ${C.border2}` }}>
+                {['PRODUCTO','CATEGORÍA','STOCK ACTUAL','STOCK MÍNIMO','DIFERENCIA'].map(h=>(
+                  <th key={h} style={{ padding:'11px 12px', textAlign:'left', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {riskProducts.map((p,i) => {
+                const diff = parseFloat(p.stock_actual || 0) - parseFloat(p.stock_minimo || 0);
+                return (
+                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
+                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>{p.nombre}</td>
+                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'11px', color:C.textSec }}>{p.categoria || '-'}</td>
+                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.stock_actual} {p.unidad}</td>
+                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.stock_minimo} {p.unidad}</td>
+                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', fontWeight:700, color:diff < -5 ? '#EF4444' : C.orange }}>{diff} {p.unidad}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ padding:'32px 0', textAlign:'center', color:C.teal, fontFamily:F }}>✓ Todos los productos en niveles correctos</div>
+        )}
       </Card>
     </div>
   );
 }
 
-// ─── COCKTAIL CARD ────────────────────────────────────────────────────────────
+
 function CocktailCard({ cocktail, readonly, onDelete, onEdit }) {
   const [open, setOpen] = useState(false);
   const mc = marginColor(cocktail.margin);
@@ -2819,6 +2897,315 @@ function Local({ localName, onLocalNameChange }) {
 }
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
+
+// ─── DRAWER: LOCAL SETTINGS ───────────────────────────────────────────────────
+function LocalDrawer({ isOpen, onClose, localName, onLocalNameChange }) {
+  const [tab, setTab] = useState('perfil');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
+  
+  // PERFIL tab state
+  const [perfil, setPerfil] = useState({
+    nombre: '', tipo: 'Coctelería', direccion: '', ciudad: '', 
+    telefono: '', email: '', aforo: '', logo_filename: ''
+  });
+  const [logoPreview, setLogoPreview] = useState('');
+  const [operativo, setOperativo] = useState({
+    umbral_dias: 3, proveedor: '', telefono_proveedor: ''
+  });
+  
+  // PREFS tab state
+  const [prefs, setPrefs] = useState({
+    stock_alerts: true, shift_alerts: true, weekly_report: false,
+    compact_mode: false, weekly_day: 'Lunes'
+  });
+  const [users, setUsers] = useState([{ id:1, email:'admin@barops.es', rol:'ADMIN', avatar:'AB' }]);
+  const [inviteEmail, setInviteEmail] = useState('');
+
+  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
+
+  useEffect(() => {
+    if (isOpen) fetchData();
+  }, [isOpen]);
+
+  const fetchData = async () => {
+    try {
+      if (!supabase) throw new Error('Supabase no conectado');
+      const { data, error } = await supabase.from('locales').select('*').eq('id', LOCAL_ID).single();
+      if (error) throw error;
+      
+      setPerfil({
+        nombre: data.nombre || '',
+        tipo: data.tipo || 'Coctelería',
+        direccion: data.direccion || '',
+        ciudad: data.ciudad || '',
+        telefono: data.telefono || '',
+        email: data.email || '',
+        aforo: data.aforo || '',
+        logo_filename: data.logo_filename || ''
+      });
+      setLogoPreview(data.logo_filename ? getPublicLogoUrl(data.logo_filename) : '');
+      
+      const config = JSON.parse(localStorage.getItem('barops_config') || '{}');
+      setOperativo({
+        umbral_dias: config.umbral_dias || 3,
+        proveedor: config.proveedor || '',
+        telefono_proveedor: config.telefono_proveedor || ''
+      });
+      
+      const savedPrefs = JSON.parse(localStorage.getItem('barops_prefs') || '{}');
+      setPrefs(p => ({...p, ...savedPrefs}));
+      
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching local data:', err);
+      setToast('Error al cargar configuración');
+      setLoading(false);
+    }
+  };
+
+  const handleLogoUpload = async (file) => {
+    if (!file || !supabase) return;
+    
+    try {
+      const ext = file.name.split('.').pop();
+      const filename = `${LOCAL_ID}-logo-${Date.now()}.${ext}`;
+      
+      const { error } = await supabase.storage.from('logos').upload(filename, file, { upsert: true });
+      if (error) throw error;
+      
+      setPerfil(p => ({...p, logo_filename: filename}));
+      setLogoPreview(getPublicLogoUrl(filename));
+      setToast('Logo subido correctamente');
+    } catch (err) {
+      console.error('Error uploading logo:', err);
+      setToast('Error al subir logo');
+    }
+  };
+
+  const handleSavePerfil = async () => {
+    setSaving(true);
+    try {
+      if (!supabase) throw new Error('Supabase no conectado');
+      const { error } = await supabase.from('locales').update(perfil).eq('id', LOCAL_ID);
+      if (error) throw error;
+      
+      localStorage.setItem('barops_config', JSON.stringify(operativo));
+      localStorage.setItem('barops_local_name', perfil.nombre);
+      onLocalNameChange(perfil.nombre);
+      setToast('Cambios guardados ✓');
+    } catch (err) {
+      console.error('Error saving perfil:', err);
+      setToast('Error al guardar cambios');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSavePrefs = async () => {
+    setSaving(true);
+    try {
+      localStorage.setItem('barops_prefs', JSON.stringify(prefs));
+      setToast('Preferencias guardadas ✓');
+    } catch (err) {
+      setToast('Error al guardar preferencias');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleExportInventario = async () => {
+    try {
+      if (!supabase) throw new Error('Supabase no conectado');
+      const { data, error } = await supabase.from('productos').select('*').eq('local_id', LOCAL_ID);
+      if (error) throw error;
+      if (!data || data.length === 0) { setToast('No hay productos para exportar'); return; }
+      
+      const headers = ['Nombre', 'Categoría', 'Stock Actual', 'Stock Mínimo', 'Unidad', 'Coste Unitario'];
+      const rows = data.map(p => [p.nombre, p.categoria || '', p.stock_actual || 0, p.stock_minimo || 0, p.unidad || '', p.coste_unitario || 0]);
+      const csv = generateCSV(headers, rows);
+      downloadCSV(csv, `barops-inventario-${formatDateISO()}.csv`);
+      setToast('Inventario exportado ✓');
+    } catch (err) {
+      console.error('Error exporting inventario:', err);
+      setToast('Error al exportar');
+    }
+  };
+
+  const handleExportMovimientos = async () => {
+    try {
+      if (!supabase) throw new Error('Supabase no conectado');
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 90);
+      const { data, error } = await supabase.from('movimientos_stock')
+        .select('*').eq('local_id', LOCAL_ID).gte('fecha', formatDateISO(startDate));
+      if (error) throw error;
+      if (!data || data.length === 0) { setToast('Aún no hay movimientos registrados'); return; }
+      
+      const headers = ['Fecha', 'Producto ID', 'Tipo', 'Cantidad', 'Motivo'];
+      const rows = data.map(m => [m.fecha, m.producto_id, m.tipo, m.cantidad, m.motivo || '']);
+      const csv = generateCSV(headers, rows);
+      downloadCSV(csv, `barops-movimientos-${formatDateISO()}.csv`);
+      setToast('Movimientos exportados ✓');
+    } catch (err) {
+      console.error('Error exporting movimientos:', err);
+      setToast('Error al exportar');
+    }
+  };
+
+  const handleExportMerma = async () => {
+    try {
+      if (!supabase) throw new Error('Supabase no conectado');
+      const { data, error } = await supabase.from('inventario_fisico_items')
+        .select('*, inventarios_fisicos(fecha_conteo)').eq('inventarios_fisicos.local_id', LOCAL_ID);
+      if (error) throw error;
+      if (!data || data.length === 0) { setToast('Aún no hay inventarios físicos completados'); return; }
+      
+      const headers = ['Producto ID', 'Cantidad Teórica', 'Cantidad Real', 'Diferencia', 'Fecha Conteo'];
+      const rows = data.map(item => [
+        item.producto_id,
+        item.cantidad_teorica,
+        item.cantidad_real,
+        item.diferencia,
+        item.inventarios_fisicos?.fecha_conteo || ''
+      ]);
+      const csv = generateCSV(headers, rows);
+      downloadCSV(csv, `barops-merma-${formatDateISO()}.csv`);
+      setToast('Informe de merma exportado ✓');
+    } catch (err) {
+      console.error('Error exporting merma:', err);
+      setToast('Error al exportar');
+    }
+  };
+
+  const handleInviteUser = () => {
+    if (!inviteEmail.trim()) { setToast('Ingresa un email válido'); return; }
+    setToast(`Invitación enviada a ${inviteEmail}`);
+    setInviteEmail('');
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position:'fixed', inset:0, background:'#00000066', zIndex:998, transition:'opacity 0.2s' }}/>
+      <div style={{ position:'fixed', right:0, top:0, bottom:0, width:'420px', background:C.card, borderLeft:`1px solid ${C.border}`, zIndex:999, display:'flex', flexDirection:'column', boxShadow:'-8px 0 24px rgba(0,0,0,0.3)' }}>
+        
+        {toast && <Toast msg={toast} onClose={()=>setToast(null)}/>}
+        
+        <div style={{ padding:'20px 24px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          <h2 style={{ fontFamily:F, fontSize:'14px', fontWeight:700, letterSpacing:'2.5px', color:C.text, margin:0 }}>CONFIGURACIÓN</h2>
+          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', padding:0 }}>
+            <X size={18} color={C.textSec}/>
+          </button>
+        </div>
+
+        <div style={{ display:'flex', gap:0, borderBottom:`1px solid ${C.border}`, padding:'0 4px' }}>
+          {['perfil', 'equipo', 'datos'].map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{
+              flex:1, padding:'14px 12px', background:'none', border:'none', cursor:'pointer',
+              borderBottom:`2px solid ${tab === t ? C.orange : 'transparent'}`,
+              fontFamily:F, fontSize:'10px', color:tab === t ? C.orange : C.textSec, letterSpacing:'2px', fontWeight:tab === t ? 700 : 400,
+              transition:'all 0.2s', textTransform:'uppercase'
+            }}>
+              {t === 'perfil' ? 'PERFIL' : t === 'equipo' ? 'EQUIPO' : 'DATOS'}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ flex:1, overflowY:'auto', padding:'20px 24px' }}>
+          {loading ? (
+            <div style={{ textAlign:'center', color:C.teal }}>CARGANDO...</div>
+          ) : tab === 'perfil' ? (
+            <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
+              <div style={{ textAlign:'center' }}>
+                <div style={{ width:100, height:100, margin:'0 auto 12px', borderRadius:8, background:C.cardAlt, border:`2px dashed ${C.border2}`, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
+                  {logoPreview ? <img src={logoPreview} style={{ width:'100%', height:'100%', objectFit:'cover' }}/> : <Store size={40} color={C.textSec}/>}
+                </div>
+                <label style={{ display:'inline-block', padding:'8px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'10px', color:C.text, letterSpacing:'1px', fontWeight:700 }}>
+                  SUBIR LOGO
+                  <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && handleLogoUpload(e.target.files[0])} style={{ display:'none' }}/>
+                </label>
+              </div>
+              {['nombre', 'tipo', 'direccion', 'ciudad', 'telefono', 'email', 'aforo'].map(field => (
+                <div key={field}>
+                  <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>{field}</label>
+                  {field === 'tipo' ? (
+                    <select value={perfil[field]} onChange={(e) => setPerfil(p => ({...p, [field]:e.target.value}))} 
+                      style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text }}>
+                      {['Coctelería', 'Bar', 'Restaurante-Bar', 'Club', 'Otro'].map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  ) : (
+                    <input type={field === 'email' ? 'email' : field === 'aforo' ? 'number' : 'text'} value={perfil[field]} onChange={(e) => setPerfil(p => ({...p, [field]:e.target.value}))} style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}/>
+                  )}
+                </div>
+              ))}
+              <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14, marginTop:8 }}>
+                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.orange, letterSpacing:'2px', fontWeight:700, marginBottom:12 }}>CONFIGURACIÓN OPERATIVA</h3>
+                {['umbral_dias', 'proveedor', 'telefono_proveedor'].map(field => (
+                  <div key={field} style={{ marginBottom:10 }}>
+                    <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>{field === 'umbral_dias' ? 'Umbral Stock Crítico (días)' : field === 'proveedor' ? 'Proveedor Principal' : 'Teléfono Proveedor'}</label>
+                    <input type={field === 'umbral_dias' ? 'number' : 'text'} value={operativo[field]} onChange={(e) => setOperativo(p => ({...p, [field]:e.target.value}))} style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}/>
+                  </div>
+                ))}
+              </div>
+              <button onClick={handleSavePerfil} disabled={saving} style={{ width:'100%', padding:'12px', background:C.orange, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:'#000', fontWeight:700, letterSpacing:'2px', transition:'opacity 0.2s', opacity:saving ? 0.6 : 1 }}>GUARDAR CAMBIOS</button>
+            </div>
+          ) : tab === 'equipo' ? (
+            <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
+              <div>
+                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.teal, letterSpacing:'2px', fontWeight:700, marginBottom:12 }}>EQUIPO DE ACCESO</h3>
+                {users.map(u => (
+                  <div key={u.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px', background:C.cardAlt, borderRadius:4, marginBottom:8 }}>
+                    <div style={{ width:36, height:36, borderRadius:'50%', background:C.orange, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F, fontSize:'11px', fontWeight:700, color:'#000', flexShrink:0 }}>{u.avatar}</div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontFamily:F, fontSize:'11px', color:C.text }}>{u.email}</div>
+                      <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec }}>{u.rol}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.purple, letterSpacing:'2px', fontWeight:700, marginBottom:10 }}>INVITAR USUARIO</h3>
+                <div style={{ display:'flex', gap:8 }}>
+                  <input type="email" placeholder="email@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} style={{ flex:1, padding:'10px 12px', fontFamily:F, fontSize:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}/>
+                  <button onClick={handleInviteUser} style={{ padding:'10px 14px', background:C.purple, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:'#fff', fontWeight:700 }}>ENVIAR</button>
+                </div>
+              </div>
+              <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14 }}>
+                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.amber, letterSpacing:'2px', fontWeight:700, marginBottom:14 }}>PREFERENCIAS</h3>
+                {[{key:'stock_alerts', label:'Alertas de stock crítico'}, {key:'shift_alerts', label:'Alertas de turnos'}, {key:'weekly_report', label:'Informe semanal'}, {key:'compact_mode', label:'Modo compacto'}].map(item => (
+                  <div key={item.key} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 0', borderBottom:`1px solid ${C.border2}` }}>
+                    <span style={{ fontFamily:F, fontSize:'11px', color:C.text }}>{item.label}</span>
+                    <button onClick={() => setPrefs(p => ({...p, [item.key]:!p[item.key]}))} style={{ width:44, height:24, borderRadius:12, background:prefs[item.key] ? C.orange : '#333', border:'none', cursor:'pointer', transition:'all 0.2s', position:'relative' }}>
+                      <div style={{ position:'absolute', width:20, height:20, borderRadius:'50%', background:'#fff', top:2, left:prefs[item.key] ? 22 : 2, transition:'left 0.2s' }}/>
+                    </button>
+                  </div>
+                ))}
+                <div style={{ marginTop:14 }}>
+                  <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>Día del Informe Semanal</label>
+                  <select value={prefs.weekly_day} onChange={(e) => setPrefs(p => ({...p, weekly_day:e.target.value}))} style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text }}>
+                    {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+              </div>
+              <button onClick={handleSavePrefs} disabled={saving} style={{ width:'100%', padding:'12px', background:C.orange, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:'#000', fontWeight:700, letterSpacing:'2px', transition:'opacity 0.2s', opacity:saving ? 0.6 : 1, marginTop:12 }}>GUARDAR PREFERENCIAS</button>
+            </div>
+          ) : (
+            <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+              <button onClick={handleExportInventario} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s', hover:{background:C.orange} }}>📊 EXPORTAR INVENTARIO CSV</button>
+              <button onClick={handleExportMovimientos} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s' }}>📈 EXPORTAR MOVIMIENTOS CSV</button>
+              <button onClick={handleExportMerma} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s' }}>📉 EXPORTAR INFORME MERMA CSV</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+
 export default function BarOps() {
   const params = new URLSearchParams(window.location.search);
   const initialScreen = (params.get('payment') === 'success' || params.get('session_id')) ? 'success' : 'dashboard';
@@ -2826,6 +3213,7 @@ export default function BarOps() {
   const [customIngs, setCustomIngs] = useState([]);
   const [customInv,  setCustomInv]  = useState([]);
   const [localName, setLocalName] = useState(localStorage.getItem('barops_local_name') || 'Paradiso Cocktail Bar');
+  const [showLocalDrawer, setShowLocalDrawer] = useState(false);
 
   const [inventoryLoading, setInventoryLoading] = useState(true);
 
@@ -2942,7 +3330,6 @@ export default function BarOps() {
     agente:     <AgenteIA/>,
     analytics:  <Analytics/>,
     carta:      <Carta/>,
-    local:      <Local localName={localName} onLocalNameChange={setLocalName}/>,
     pricing:    <Pricing/>,
     success:    <PaymentSuccess/>,
   };
@@ -2973,11 +3360,12 @@ export default function BarOps() {
             body { font-size: 14px; }
           }
         `}</style>
-        <Sidebar active={screen} setActive={setScreen} localName={localName}/>
+        <Sidebar active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={()=>setShowLocalDrawer(true)}/>
         <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', marginTop:isMobile?60:0 }}>
           {SCREENS[screen]}
         </div>
       </div>
+      <LocalDrawer isOpen={showLocalDrawer} onClose={()=>setShowLocalDrawer(false)} localName={localName} onLocalNameChange={setLocalName}/>
     </AppCtx.Provider>
   );
 }
