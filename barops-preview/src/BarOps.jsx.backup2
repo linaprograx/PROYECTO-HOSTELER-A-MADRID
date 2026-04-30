@@ -9,7 +9,7 @@ import {
   AlertTriangle, CheckCircle, Clock, TrendingUp, TrendingDown,
   Send, HelpCircle, Plus, Bell, X, Zap,
   ShoppingCart, ChevronDown, ChevronUp, UserCheck,
-  BookOpen, Trash2, CreditCard, Store, Settings,
+  BookOpen, Trash2, CreditCard, Store,
 } from 'lucide-react';
 
 // ─── TOKENS ───────────────────────────────────────────────────────────────────
@@ -56,13 +56,12 @@ const parseCocktailsCSV = (raw) => {
 
   const mapping = {
     nombre: ['nombre','name','titulo','cocktail','coctel','product','producto'],
-    tipo: ['tipo','type','categoria','category'],
     descripcion: ['descripcion','description','notas','notes','ingredientes','ingredients','receta'],
     precio: ['precio','price','venta','sale_price','pvp','cost','coste'],
   };
 
   const getCol = (k) => headers.findIndex(h => mapping[k].includes(h));
-  const colNombre = getCol('nombre'), colTipo = getCol('tipo'), colDesc = getCol('descripcion'), colPrecio = getCol('precio');
+  const colNombre = getCol('nombre'), colDesc = getCol('descripcion'), colPrecio = getCol('precio');
 
   if (colNombre < 0 || colPrecio < 0) {
     return { ok:false, items:[], errors:['Faltan columnas: nombre y precio son obligatorias'] };
@@ -72,8 +71,6 @@ const parseCocktailsCSV = (raw) => {
   for (let i = 1; i < lines.length; i++) {
     const cells = lines[i].split(sep).map(c=>c.trim());
     const nombre = cells[colNombre]?.trim();
-    const tipoRaw = colTipo >= 0 ? cells[colTipo]?.trim().toLowerCase() || '' : '';
-    const tipo = ['clasico','clasicos','classic'].includes(tipoRaw) ? 'clasico' : 'autor';
     const descripcion = colDesc >= 0 ? cells[colDesc]?.trim() || '' : '';
     const precioStr = cells[colPrecio]?.trim().replace('€','').replace(',','.') || '';
     const precio = parseFloat(precioStr);
@@ -84,7 +81,6 @@ const parseCocktailsCSV = (raw) => {
     items.push({
       id: `custom_cocktail_${Date.now()}_${i}`,
       name: nombre,
-      tipo: tipo,
       description: descripcion,
       price: precio,
       cost: 0,
@@ -446,35 +442,6 @@ function parseCSV(raw) {
   return { ok:true, items:results, errors };
 }
 
-
-// ─── HELPER FUNCTIONS ─────────────────────────────────────────────────────────
-const getInitials = (name) => {
-  if (!name) return '?';
-  return name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
-};
-
-const generateCSV = (headers, rows) => {
-  const csv = [headers, ...rows].map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
-  return csv;
-};
-
-const downloadCSV = (csv, filename) => {
-  const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(link.href);
-};
-
-const formatDateISO = (date = new Date()) => date.toISOString().split('T')[0];
-
-const getPublicLogoUrl = (filename) => {
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-  if (!filename) return null;
-  return `${SUPABASE_URL}/storage/v1/object/public/logos/${filename}`;
-};
-
 // ─── ATOMS ────────────────────────────────────────────────────────────────────
 function Badge({ label, color, bg }) {
   return (
@@ -597,7 +564,7 @@ function TypingDots() {
 }
 
 // ─── SIDEBAR ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
+function Sidebar({ active, setActive, localName }) {
   const [mobile, setMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [localPhoto, setLocalPhoto] = useState(localStorage.getItem('barops_local_photo') || '');
@@ -672,7 +639,7 @@ function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
         })}
       </nav>
       <div style={{ padding:'16px 22px', borderTop:`1px solid ${C.border2}` }}>
-        <button onClick={() => onOpenLocalSettings?.()} style={{ width:'100%', padding:'10px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, marginBottom:12, cursor:'pointer', transition:'all 0.2s', display:'flex', alignItems:'center', gap:10 }}>
+        <button onClick={() => setActive('local')} style={{ width:'100%', padding:'10px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, marginBottom:12, cursor:'pointer', transition:'all 0.2s', display:'flex', alignItems:'center', gap:10 }}>
           <Store size={14} color={C.orange}/>
           <div style={{ textAlign:'left', flex:1 }}>
             <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px' }}>GESTIÓN</div>
@@ -730,78 +697,27 @@ function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
 }
 
 // ─── SCREEN 1: DASHBOARD ──────────────────────────────────────────────────────
-
-// ─── SCREEN 1: DASHBOARD ──────────────────────────────────────────────────────
 function Dashboard() {
   const [toast, setToast] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [kpis, setKpis] = useState([
-    { label:'REFERENCIAS EN INVENTARIO', value:0, sub:'productos activos', color:C.teal, Icon:Package, bg:C.tealBg },
-    { label:'STOCK EN RIESGO', value:0, sub:'productos críticos', color:'#EF4444', Icon:AlertTriangle, bg:'#EF444415' },
-    { label:'VALOR TOTAL INVENTARIO', value:'€0', sub:'stock valorizado', color:C.orange, Icon:TrendingUp, bg:C.orangeBg },
-    { label:'PRODUCTOS SIN STOCK', value:0, sub:'necesitan reposición', color:C.amber, Icon:Package, bg:C.amberBg },
-  ]);
-  const [criticalProducts, setCriticalProducts] = useState([]);
-  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
-
-  useEffect(() => {
-    fetchDashboardData();
-  }, []);
-
-  const fetchDashboardData = async () => {
-    try {
-      if (!supabase) throw new Error('Supabase no conectado');
-      const { data:products, error } = await supabase.from('productos').select('*').eq('local_id', LOCAL_ID);
-      if (error) throw error;
-
-      if (!products || products.length === 0) {
-        setLoading(false);
-        return;
-      }
-
-      const totalRefs = products.length;
-      const criticalCount = products.filter(p => parseFloat(p.stock_actual || 0) <= parseFloat(p.stock_minimo || 0)).length;
-      const totalValue = products.reduce((sum, p) => sum + (parseFloat(p.stock_actual || 0) * parseFloat(p.coste_unitario || 0)), 0);
-      const zeroStockCount = products.filter(p => parseFloat(p.stock_actual || 0) === 0).length;
-
-      setKpis([
-        { label:'REFERENCIAS EN INVENTARIO', value:totalRefs, sub:'productos activos', color:C.teal, Icon:Package, bg:C.tealBg },
-        { label:'STOCK EN RIESGO', value:`${criticalCount} REF.`, sub:'Nivel: ' + (criticalCount > 0 ? 'CRÍTICO' : 'OK'), color:criticalCount > 0 ? '#EF4444' : C.teal, Icon:AlertTriangle, bg:criticalCount > 0 ? '#EF444415' : C.tealBg },
-        { label:'VALOR TOTAL INVENTARIO', value:`€${totalValue.toFixed(2)}`, sub:'stock valorizado', color:C.orange, Icon:TrendingUp, bg:C.orangeBg },
-        { label:'PRODUCTOS SIN STOCK', value:zeroStockCount, sub:'necesitan reposición', color:C.amber, Icon:Package, bg:C.amberBg },
-      ]);
-
-      const criticals = products
-        .map(p => ({...p, diff: parseFloat(p.stock_actual || 0) - parseFloat(p.stock_minimo || 0)}))
-        .filter(p => p.diff < 0)
-        .sort((a,b) => a.diff - b.diff)
-        .slice(0,5);
-      setCriticalProducts(criticals);
-      setLoading(false);
-    } catch (err) {
-      console.error('Error fetching dashboard data:', err);
-      setToast('Error al cargar datos del dashboard');
-      setLoading(false);
-    }
-  };
-
+  const [chatInput, setChatInput] = useState('');
+  const [staffingOpen, setStaffingOpen] = useState(false);
+  const KPIS = [
+    { label:'MERMA ESTIMADA MES', value:'€710',   sub:'−66% vs nov. 2025',  color:C.teal,   Icon:TrendingDown, bg:C.tealBg    },
+    { label:'STOCK EN RIESGO',    value:'3 REF.',  sub:'Nivel: CRÍTICO',      color:'#EF4444',Icon:AlertTriangle,bg:'#EF444415' },
+    { label:'TURNOS CUBIERTOS',   value:'7 / 10',  sub:'70% de cobertura',   color:C.orange, Icon:CheckCircle,  bg:C.orangeBg  },
+    { label:'AHORRO GENERADO',    value:'€1.140',  sub:'ROI: 5.7× este mes', color:C.amber,  Icon:TrendingUp,   bg:C.amberBg   },
+  ];
   const CHIPS = ['¿Qué me va a faltar este finde?','¿Cuánto me cuesta un Negroni real?','Necesito un bartender mañana'];
-
-  if (loading) {
-    return (
-      <div style={{ flex:1, padding:'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
-        <div style={{ color:C.teal, fontSize:'14px', letterSpacing:'2px' }}>CARGANDO...</div>
-      </div>
-    );
-  }
+  const alertItems = INVENTORY.filter(i=>i.risk!=='stable');
+  const dashShifts = [...OPEN_SHIFTS.slice(0,2), ...COVERED_SHIFTS.slice(0,4)];
 
   return (
     <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
-      {toast && <Toast msg={toast} onClose={()=>setToast(null)}/>}
+      {toast&&<Toast msg={toast} onClose={()=>setToast(null)}/>}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:28 }}>
         <div>
           <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>DASHBOARD</h1>
-          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Paradiso Cocktail Bar — {new Date().toLocaleDateString('es-ES', {weekday:'long', year:'numeric', month:'long', day:'numeric'})}</p>
+          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Paradiso Cocktail Bar — Lunes, 28 de Abril de 2026</p>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:12 }}>
           <Bell size={15} color={C.textSec} style={{ cursor:'pointer' }}/>
@@ -812,7 +728,7 @@ function Dashboard() {
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
-        {kpis.map(({ label,value,sub,color,Icon,bg },i)=>(
+        {KPIS.map(({ label,value,sub,color,Icon,bg },i)=>(
           <Card key={i} accent={color} sx={{ padding:20, background:bg }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
               <div>
@@ -826,48 +742,105 @@ function Dashboard() {
         ))}
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:14, marginBottom:16 }}>
+      <div style={{ display:'grid', gridTemplateColumns:staffingOpen?'1fr 1fr':'1fr', gap:14, marginBottom:16, transition:'all 0.3s' }}>
         <Card sx={{ padding:20 }}>
           <SLabel label="ALERTAS DE INVENTARIO" color={C.orange} icon={AlertTriangle}/>
           <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-            {criticalProducts.length > 0 ? (
-              criticalProducts.map((item,i) => (
-                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 0', borderBottom:`1px solid ${C.border2}` }}>
-                  <div>
-                    <div style={{ fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>{item.nombre}</div>
-                    <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>Stock: {item.stock_actual} {item.unidad} (mín: {item.stock_minimo})</div>
+            {alertItems.map(item=>(
+              <div key={item.id} style={{
+                display:'flex', alignItems:'center', justifyContent:'space-between',
+                padding:'10px 12px', background:C.cardAlt,
+                border:`1px solid ${item.risk==='critical'?'#EF444433':C.amber+'33'}`, borderRadius:3,
+              }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:'13px', color:C.text, fontWeight:700, marginBottom:3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.name}</div>
+                  <div style={{ display:'flex', gap:10 }}>
+                    <span style={{ fontSize:'11px', color:C.textSec }}>Stock: {item.stock}</span>
+                    <span style={{ fontSize:'11px', color:item.days<=3?'#EF4444':C.amber, fontWeight:700 }}>{item.days}d restantes</span>
                   </div>
-                  <div style={{ padding:'4px 10px', background:'#EF444420', border:`1px solid #EF4444`, borderRadius:3, fontFamily:F, fontSize:'9px', color:'#EF4444', fontWeight:700 }}>CRÍTICO</div>
                 </div>
-              ))
-            ) : (
-              <div style={{ padding:'16px 0', textAlign:'center', color:C.teal, fontFamily:F, fontSize:'12px' }}>Todo el inventario en niveles correctos ✓</div>
-            )}
+                <div style={{ display:'flex', gap:8, alignItems:'center', marginLeft:10 }}>
+                  <RiskBadge risk={item.risk}/>
+                  <Btn onClick={()=>setToast(`Pedido de ${item.name} enviado al proveedor`)}>PEDIR YA</Btn>
+                </div>
+              </div>
+            ))}
           </div>
         </Card>
+
+        {staffingOpen&&(
+        <Card sx={{ padding:20 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+            <SLabel label="TURNOS ACTIVOS" color={C.teal} icon={Clock} style={{margin:0}}/>
+            <button onClick={()=>setStaffingOpen(false)} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec, display:'flex' }}>
+              <X size={16}/>
+            </button>
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {dashShifts.map(s=>(
+              <div key={s.id} style={{
+                display:'flex', alignItems:'center', justifyContent:'space-between',
+                padding:'10px 12px', background:C.cardAlt,
+                border:`1px solid ${s.status==='urgent'?'#EF444433':s.status==='searching'?C.amber+'33':C.border}`,
+                borderRadius:3,
+              }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:'11px', color:C.textSec, marginBottom:2 }}>{s.date} · {s.time}</div>
+                  <div style={{ fontSize:'13px', color:C.text, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{s.profile}</div>
+                  {s.pro&&<div style={{ fontSize:'11px', color:C.teal, marginTop:2 }}>→ {s.pro}</div>}
+                </div>
+                <ShiftBadge status={s.status}/>
+              </div>
+            ))}
+          </div>
+        </Card>
+        )}
+
+        {!staffingOpen&&(
+        <Card sx={{ padding:20, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:200, cursor:'pointer' }} onClick={()=>setStaffingOpen(true)}>
+          <Clock size={40} color={C.teal} style={{ opacity:0.5, marginBottom:12 }}/>
+          <div style={{ fontSize:'11px', color:C.textSec, letterSpacing:'2px', marginBottom:8, textAlign:'center' }}>GESTIÓN DE TURNOS</div>
+          <div style={{ fontSize:'13px', color:C.teal, fontWeight:700, letterSpacing:'1px' }}>7 / 10 CUBIERTOS</div>
+          <div style={{ fontSize:'10px', color:C.textSec, marginTop:8, textAlign:'center' }}>Haz click para expandir y<br/>asignar personal</div>
+        </Card>
+        )}
       </div>
 
-      <Card sx={{ padding:20 }}>
-        <SLabel label="ASISTENTE IA" color={C.purple} icon={Bot}/>
-        <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginTop:14 }}>
-          {CHIPS.map((c,i) => (
-            <button key={i} onClick={() => setToast('Abriendo chat IA...')} style={{ padding:'8px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'10px', color:C.textSec, transition:'all 0.2s' }}>
-              {c}
+      <Card accent={C.orange} sx={{ padding:20 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+          <Bot size={15} color={C.orange}/>
+          <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>AGENTE BAROPS</span>
+          <span style={{ padding:'2px 8px', background:C.tealBg, border:`1px solid ${C.teal}33`, borderRadius:2, fontFamily:F, fontSize:'9px', color:C.teal, letterSpacing:'1.5px' }}>EN LÍNEA</span>
+        </div>
+        <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
+          {CHIPS.map((chip,i)=>(
+            <button key={i} onClick={()=>setChatInput(chip)} style={{ padding:'5px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'12px', color:C.textSec, cursor:'pointer' }}>
+              {chip}
             </button>
           ))}
+        </div>
+        <div style={{ display:'flex', gap:10 }}>
+          <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&setChatInput('')}
+            placeholder="Pregunta lo que necesites sobre tu negocio..."
+            style={{ flex:1, padding:'10px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none' }}
+          />
+          <Btn onClick={()=>setChatInput('')} sx={{ padding:'10px 20px', fontSize:'11px' }}>
+            <Send size={13}/> ENVIAR
+          </Btn>
         </div>
       </Card>
     </div>
   );
 }
 
-
+// ─── IMPORT COCKTAILS MODAL ──────────────────────────────────────────────────
 function ImportCocktailsModal({ onClose, onSave }) {
   const [step, setStep] = useState(1);
   const [raw, setRaw] = useState('');
   const [parsed, setParsed] = useState([]);
   const [parseErrors, setParseErrors] = useState([]);
   const [parseErr, setParseErr] = useState('');
+  const [cocktailType, setCocktailType] = useState('autor');
   const fileRef = useRef(null);
 
   const handleFile = (e) => {
@@ -899,12 +872,8 @@ function ImportCocktailsModal({ onClose, onSave }) {
     setParsed(p => p.filter((_, i) => i !== idx));
   };
 
-  const changeTipo = (idx, tipo) => {
-    setParsed(p => p.map((c, i) => i === idx ? {...c, tipo} : c));
-  };
-
   const downloadTemplate = () => {
-    const tpl = `nombre,tipo,precio,descripcion\nMargarita Clásica,clasico,12.00,Patrón · Cointreau · Lima\nMojito Premium,autor,10.50,Ron Diplomático · Menta · Lima\nNegroni Paradiso,clasico,13.00,Gin · Campari · Martini`;
+    const tpl = `nombre,descripcion,precio\nMargarita Clásica,Patrón · Cointreau · Lima,12.00\nMojito Premium,Ron Diplomático · Menta · Lima,10.50\nNegroni Paradiso,Gin · Campari · Martini,13.00`;
     const blob = new Blob([tpl], { type:'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -915,7 +884,7 @@ function ImportCocktailsModal({ onClose, onSave }) {
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
-      <Card accent={C.orange} sx={{ padding:28, maxWidth:700, width:'90%', maxHeight:'90vh', overflowY:'auto' }}>
+      <Card accent={C.orange} sx={{ padding:28, maxWidth:600, width:'90%', maxHeight:'90vh', overflowY:'auto' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
           <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>IMPORTAR CÓCTELES</span>
           <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
@@ -929,7 +898,7 @@ function ImportCocktailsModal({ onClose, onSave }) {
             <textarea
               value={raw}
               onChange={e => setRaw(e.target.value)}
-              placeholder="Pega tu CSV aquí (nombre,tipo,precio,descripcion)..."
+              placeholder="Pega tu CSV aquí (nombre,descripcion,precio)..."
               style={{ width:'100%', height:150, padding:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box', marginBottom:12, resize:'vertical' }}
             />
             <input ref={fileRef} type="file" accept=".csv" onChange={handleFile} style={{ display:'none' }}/>
@@ -950,43 +919,49 @@ function ImportCocktailsModal({ onClose, onSave }) {
 
         {step === 2 && (
           <div>
-            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:12 }}>PASO 2: REVISAR ({parsed.length} cócteles — importarán como BORRADORES)</div>
+            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:12 }}>PASO 2: PREVIEW ({parsed.length} cócteles)</div>
+
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>TIPO DE CÓCTEL</div>
+              <div style={{ display:'flex', gap:10 }}>
+                {[['clasicos', '🍹 CLÁSICOS'], ['autor', '⭐ DE AUTOR']].map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setCocktailType(val)}
+                    style={{
+                      flex:1, padding:'10px 12px', background:cocktailType===val?C.orange+'22':C.cardAlt,
+                      border:`1px solid ${cocktailType===val?C.orange:C.border2}`, borderRadius:3,
+                      fontFamily:F, fontSize:'11px', color:cocktailType===val?C.orange:C.textSec, cursor:'pointer', fontWeight:700, letterSpacing:'1px',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {parseErrors.length > 0 && (
               <div style={{ padding:'10px', background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:3, fontSize:'10px', color:C.amber, marginBottom:12 }}>
                 ⚠ {parseErrors.length} filas con errores (serán ignoradas)
               </div>
             )}
-            <div style={{ maxHeight:350, overflowY:'auto', marginBottom:14 }}>
+            <div style={{ maxHeight:300, overflowY:'auto', marginBottom:14 }}>
               {parsed.map((c, i) => (
-                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, marginBottom:8, gap:12 }}>
-                  <div style={{ flex:1, minWidth:0 }}>
+                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, marginBottom:8 }}>
+                  <div>
                     <div style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{c.name}</div>
                     {c.description && <div style={{ fontSize:'10px', color:C.textSec, marginTop:2 }}>{c.description.substring(0,50)}</div>}
                     <div style={{ fontSize:'11px', color:C.orange, fontWeight:700, marginTop:3 }}>€{c.price.toFixed(2)}</div>
                   </div>
-                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                    <select
-                      value={c.tipo}
-                      onChange={(e) => changeTipo(i, e.target.value)}
-                      style={{
-                        padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3,
-                        fontFamily:F, fontSize:'11px', color:C.textSec, cursor:'pointer', minWidth:120,
-                      }}
-                    >
-                      <option value="clasico">CLÁSICO</option>
-                      <option value="autor">DE AUTOR</option>
-                    </select>
-                    <button onClick={() => removeItem(i)} style={{ background:'none', border:'none', cursor:'pointer', color:'#EF4444', display:'flex', flexShrink:0 }}>
-                      <Trash2 size={14}/>
-                    </button>
-                  </div>
+                  <button onClick={() => removeItem(i)} style={{ background:'none', border:'none', cursor:'pointer', color:'#EF4444', display:'flex' }}>
+                    <Trash2 size={14}/>
+                  </button>
                 </div>
               ))}
             </div>
             <div style={{ display:'flex', gap:10 }}>
               <Btn variant="outline" onClick={() => setStep(1)} sx={{ flex:1, padding:'11px', fontSize:'11px' }}>← ATRÁS</Btn>
-              <Btn onClick={() => { onSave(parsed); onClose(); }} sx={{ flex:1, padding:'11px', fontSize:'11px' }}>✓ IMPORTAR {parsed.length}</Btn>
+              <Btn onClick={() => { onSave(parsed, cocktailType); onClose(); }} sx={{ flex:1, padding:'11px', fontSize:'11px' }}>✓ IMPORTAR</Btn>
             </div>
           </div>
         )}
@@ -1795,400 +1770,178 @@ function AgenteIA() {
 // ─── SCREEN 5: ANALYTICS ──────────────────────────────────────────────────────
 const TT_STYLE = { background:C.card, border:`1px solid #333`, fontFamily:F, fontSize:'11px', borderRadius:3, color:C.text };
 
-
-// ─── SCREEN 5: ANALYTICS ──────────────────────────────────────────────────────
 function Analytics() {
-  const [loading, setLoading] = useState(true);
-  const [categoryData, setCategoryData] = useState([]);
-  const [topProducts, setTopProducts] = useState([]);
-  const [riskProducts, setRiskProducts] = useState([]);
-  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
-
-  useEffect(() => {
-    fetchAnalyticsData();
-  }, []);
-
-  const fetchAnalyticsData = async () => {
-    try {
-      if (!supabase) throw new Error('Supabase no conectado');
-      const { data:products, error } = await supabase.from('productos').select('*').eq('local_id', LOCAL_ID);
-      if (error) throw error;
-
-      if (!products || products.length === 0) {
-        setLoading(false);
-        return;
-      }
-
-      const catMap = {};
-      const topByValue = [];
-
-      products.forEach(p => {
-        const cat = p.categoria || 'Sin categoría';
-        catMap[cat] = (catMap[cat] || 0) + 1;
-        const value = parseFloat(p.stock_actual || 0) * parseFloat(p.coste_unitario || 0);
-        if (value > 0) topByValue.push({...p, value});
-      });
-
-      const catData = Object.entries(catMap).map(([n,v]) => ({n, v})).sort((a,b) => b.v - a.v);
-      setCategoryData(catData);
-
-      const top10 = topByValue.sort((a,b) => b.value - a.value).slice(0,10);
-      setTopProducts(top10);
-
-      const risk = products.filter(p => parseFloat(p.stock_actual || 0) <= parseFloat(p.stock_minimo || 0));
-      setRiskProducts(risk);
-
-      setLoading(false);
-    } catch (err) {
-      console.error('Error fetching analytics:', err);
-      setLoading(false);
-    }
-  };
-
-  const TT_STYLE = { background:C.card, border:`1px solid #333`, fontFamily:F, fontSize:'11px', borderRadius:3, color:C.text };
-
-  if (loading) {
-    return (
-      <div style={{ flex:1, padding:'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
-        <div style={{ color:C.teal, fontSize:'14px', letterSpacing:'2px' }}>CARGANDO...</div>
-      </div>
-    );
-  }
-
   return (
     <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
       <div style={{ marginBottom:28 }}>
         <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INTELIGENCIA DE NEGOCIO</h1>
-        <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Análisis de rendimiento — Paradiso Cocktail Bar</p>
+        <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Análisis de rendimiento — Paradiso Cocktail Bar · Nov 2025 – Abr 2026</p>
       </div>
-      
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:22 }}>
+        <Card accent={C.teal} sx={{ padding:26, background:C.tealBg }}>
+          <div style={{ fontSize:'10px', color:C.teal, letterSpacing:'2.5px', fontWeight:700, marginBottom:10 }}>AHORRO ACUMULADO CON BAROPS</div>
+          <div style={{ fontSize:'46px', color:C.teal, fontWeight:700, letterSpacing:'2px', lineHeight:1 }}>€7.240</div>
+          <div style={{ fontSize:'12px', color:C.textSec, marginTop:10 }}>Desde noviembre 2025 · 6 meses de uso</div>
+          <div style={{ fontSize:'12px', color:C.teal, marginTop:5 }}>↓ Merma reducida: €2.000/mes → €710/mes actual</div>
+        </Card>
+        <Card accent={C.orange} sx={{ padding:26, background:C.orangeBg }}>
+          <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:10 }}>ROI DE BAROPS ESTE MES</div>
+          <div style={{ fontSize:'46px', color:C.orange, fontWeight:700, letterSpacing:'2px', lineHeight:1 }}>5.7×</div>
+          <div style={{ fontSize:'12px', color:C.textSec, marginTop:10 }}>Coste BarOps: €199/mes · Ahorro: €1.140/mes</div>
+          <div style={{ fontSize:'12px', color:C.orange, marginTop:5 }}>→ €941 beneficio neto mensual vs no tener BarOps</div>
+        </Card>
+      </div>
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:18, marginBottom:22 }}>
         <Card sx={{ padding:20 }}>
-          <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>DISTRIBUCIÓN POR CATEGORÍA</div>
-          {categoryData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={210}>
-              <BarChart data={categoryData}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border2}/>
-                <XAxis dataKey="n" stroke={C.border2} tick={{ fontFamily:F, fontSize:9, fill:C.textSec }}/>
-                <YAxis stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
-                <Tooltip contentStyle={TT_STYLE} labelStyle={{ color:C.text }}/>
-                <Bar dataKey="v" fill={C.purple} radius={[2,2,0,0]}/>
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div style={{ height:210, display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec }}>Sin datos</div>
-          )}
+          <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>EVOLUCIÓN MERMA MENSUAL (€)</div>
+          <ResponsiveContainer width="100%" height={210}>
+            <LineChart data={MERMA_DATA}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border2}/>
+              <XAxis dataKey="m" stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
+              <YAxis stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
+              <Tooltip contentStyle={TT_STYLE} labelStyle={{ color:C.text }}/>
+              <Legend wrapperStyle={{ fontFamily:F, fontSize:'10px', paddingTop:'10px' }}/>
+              <Line type="monotone" dataKey="antes" stroke="#EF4444" strokeWidth={2} dot={{ fill:'#EF4444',r:4 }} name="Sin BarOps"/>
+              <Line type="monotone" dataKey="despues" stroke={C.teal} strokeWidth={2} dot={{ fill:C.teal,r:4 }} name="Con BarOps"/>
+            </LineChart>
+          </ResponsiveContainer>
         </Card>
-
         <Card sx={{ padding:20 }}>
-          <div style={{ fontSize:'10px', color:C.teal, letterSpacing:'2.5px', fontWeight:700, marginBottom:12 }}>TOP 10 PRODUCTOS POR VALOR</div>
-          {topProducts.length > 0 ? (
-            <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight:210, overflowY:'auto' }}>
-              {topProducts.map((p,i) => (
-                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:`1px solid ${C.border2}`, fontSize:'11px' }}>
-                  <div style={{ flex:1 }}>
-                    <div style={{ color:C.text, fontWeight:700 }}>#{i+1} {p.nombre}</div>
-                    <div style={{ color:C.textSec, fontSize:'9px' }}>{p.categoria || '-'}</div>
-                  </div>
-                  <div style={{ color:C.teal, fontWeight:700, textAlign:'right' }}>€{p.value.toFixed(2)}</div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ height:210, display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec }}>Sin productos con valor</div>
-          )}
+          <div style={{ fontSize:'10px', color:C.purple, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>CONSUMO POR CATEGORÍA — ABRIL (€)</div>
+          <ResponsiveContainer width="100%" height={210}>
+            <BarChart data={CAT_DATA}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border2}/>
+              <XAxis dataKey="n" stroke={C.border2} tick={{ fontFamily:F, fontSize:9, fill:C.textSec }}/>
+              <YAxis stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
+              <Tooltip contentStyle={TT_STYLE} labelStyle={{ color:C.text }}/>
+              <Bar dataKey="v" fill={C.purple} radius={[2,2,0,0]} name="Consumo €"/>
+            </BarChart>
+          </ResponsiveContainer>
         </Card>
       </div>
-
-      <Card sx={{ padding:20 }}>
-        <div style={{ fontSize:'10px', color:C.red, letterSpacing:'2.5px', fontWeight:700, marginBottom:16 }}>⚠ PRODUCTOS EN RIESGO</div>
-        {riskProducts.length > 0 ? (
-          <table style={{ width:'100%', borderCollapse:'collapse' }}>
-            <thead>
-              <tr style={{ background:C.cardAlt, borderBottom:`1px solid ${C.border2}` }}>
-                {['PRODUCTO','CATEGORÍA','STOCK ACTUAL','STOCK MÍNIMO','DIFERENCIA'].map(h=>(
-                  <th key={h} style={{ padding:'11px 12px', textAlign:'left', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {riskProducts.map((p,i) => {
-                const diff = parseFloat(p.stock_actual || 0) - parseFloat(p.stock_minimo || 0);
-                return (
-                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
-                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>{p.nombre}</td>
-                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'11px', color:C.textSec }}>{p.categoria || '-'}</td>
-                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.stock_actual} {p.unidad}</td>
-                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.stock_minimo} {p.unidad}</td>
-                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', fontWeight:700, color:diff < -5 ? '#EF4444' : C.orange }}>{diff} {p.unidad}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        ) : (
-          <div style={{ padding:'32px 0', textAlign:'center', color:C.teal, fontFamily:F }}>✓ Todos los productos en niveles correctos</div>
-        )}
+      <Card sx={{ overflow:'hidden' }}>
+        <div style={{ padding:'16px 20px', borderBottom:`1px solid ${C.border2}`, display:'flex', alignItems:'center', gap:8 }}>
+          <TrendingUp size={13} color={C.amber}/>
+          <span style={{ fontFamily:F, fontSize:'10px', color:C.amber, letterSpacing:'2.5px', fontWeight:700 }}>TOP 10 PRODUCTOS POR RENTABILIDAD — ABRIL 2026</span>
+        </div>
+        <table style={{ width:'100%', borderCollapse:'collapse' }}>
+          <thead>
+            <tr style={{ background:C.cardAlt, borderBottom:`1px solid ${C.border2}` }}>
+              {['#','PRODUCTO','CATEGORÍA','COSTE REAL','PRECIO CARTA','MARGEN REAL','UNIDADES/MES'].map(h=>(
+                <th key={h} style={{ padding:'11px 16px', textAlign:'left', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {TOP_PRODUCTS.map((p,i)=>{
+              const mg=parseFloat(p.margin);
+              const mc=mg>87?C.teal:mg>80?C.amber:'#EF4444';
+              return (
+                <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'11px', color:C.textSec }}>#{i+1}</td>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'13px', color:C.text, fontWeight:i<3?700:400 }}>{p.name}</td>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'11px', color:C.textSec }}>{p.cat}</td>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'12px', color:C.textSec }}>{p.cost}</td>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.price}</td>
+                  <td style={{ padding:'12px 16px' }}><span style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:mc }}>{p.margin}</span></td>
+                  <td style={{ padding:'12px 16px', fontFamily:F, fontSize:'12px', color:C.textSec }}>{p.units}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </Card>
     </div>
   );
 }
 
-
-function CocktailCard({ cocktail, productos=[], onUpdate, onDelete, onEdit }) {
+// ─── COCKTAIL CARD ────────────────────────────────────────────────────────────
+function CocktailCard({ cocktail, readonly, onDelete, onEdit }) {
   const [open, setOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  const ings = cocktail.coctel_ingredientes || [];
-  const cost = ings.reduce((sum, ing) => sum + (ing.cantidad * ing.coste_unitario), 0);
-  const margin = cocktail.precio > 0 ? ((cocktail.precio - cost) / cocktail.precio) * 100 : 0;
-  const mc = marginColor(margin);
-
-  const stockStatus = ings.reduce(({ sinStock, enRiesgo }, ing) => {
-    const prod = productos.find(p => p.id === ing.producto_id);
-    if (!prod) return { sinStock, enRiesgo };
-    if (prod.stock_actual === 0) return { sinStock: sinStock + 1, enRiesgo };
-    if (prod.stock_actual <= prod.stock_minimo) return { sinStock, enRiesgo: enRiesgo + 1 };
-    return { sinStock, enRiesgo };
-  }, { sinStock: 0, enRiesgo: 0 });
-
-  const ESTADO_COLOR = { activo:C.teal, borrador:'#555555', revision:C.amber, temporada:C.purple, retirado:C.red };
-  const ESTADO_LABEL = { activo:'ACTIVO', borrador:'BORRADOR', revision:'REVISIÓN', temporada:'TEMPORADA', retirado:'RETIRADO' };
-
-  const menuOptions = [
-    cocktail.tipo !== 'clasico' ? { label:'Mover a Clásico', action:()=>{ onUpdate(cocktail.id, { tipo:'clasico' }); setMenuOpen(false); } } : null,
-    cocktail.tipo !== 'autor' ? { label:'Mover a De Autor', action:()=>{ onUpdate(cocktail.id, { tipo:'autor' }); setMenuOpen(false); } } : null,
-    cocktail.estado !== 'revision' ? { label:'Enviar a Revisión', action:()=>{ onUpdate(cocktail.id, { estado:'revision' }); setMenuOpen(false); } } : null,
-    cocktail.estado !== 'activo' ? { label:'Activar', action:()=>{ onUpdate(cocktail.id, { estado:'activo' }); setMenuOpen(false); } } : null,
-    cocktail.estado !== 'temporada' ? { label:'Mover a Temporada', action:()=>{ onUpdate(cocktail.id, { estado:'temporada' }); setMenuOpen(false); } } : null,
-    cocktail.estado !== 'retirado' ? { label:'Retirar', action:()=>{ onUpdate(cocktail.id, { estado:'retirado' }); setMenuOpen(false); } } : null,
-    { label:'Eliminar', action:()=>{ if(window.confirm('¿Eliminar cóctel?')) { onDelete(cocktail.id); setMenuOpen(false); } }, color:C.red },
-  ].filter(Boolean);
-
+  const mc = marginColor(cocktail.margin);
+  const ings = cocktail.ings || cocktail.ingredients || [];
   return (
     <Card sx={{ overflow:'hidden', display:'flex', flexDirection:'column' }}>
-      <div style={{ padding:'12px 16px', position:'relative' }}>
-        <div style={{ display:'flex', gap:12, marginBottom:8 }}>
-          {cocktail.foto_url ? (
-            <img src={cocktail.foto_url} style={{ width:80, height:80, borderRadius:4, objectFit:'cover' }} alt={cocktail.nombre} />
-          ) : (
-            <div style={{ width:80, height:80, background:C.border, borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center' }}>
-              <Wine size={32} color={C.textSec} />
-            </div>
-          )}
-          <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'space-between' }}>
-            <div>
-              <div style={{ fontSize:'13px', color:C.text, fontWeight:700, marginBottom:3 }}>{cocktail.nombre}</div>
-              {cocktail.descripcion && <div style={{ fontSize:'10px', color:C.textSec, lineHeight:'1.3' }}>{cocktail.descripcion}</div>}
-            </div>
-            <div style={{ display:'flex', gap:8 }}>
-              <span style={{ fontSize:'8px', color:'#000', background:ESTADO_COLOR[cocktail.estado], padding:'2px 8px', borderRadius:2, fontWeight:700, letterSpacing:'1px' }}>
-                {ESTADO_LABEL[cocktail.estado]}
-              </span>
-              <span style={{
-                fontSize:'8px', padding:'2px 8px', borderRadius:2, fontWeight:700, letterSpacing:'1px',
-                border:`1px solid ${cocktail.tipo === 'clasico' ? C.orange : 'transparent'}`,
-                background:cocktail.tipo === 'autor' ? C.orange : 'transparent',
-                color:cocktail.tipo === 'autor' ? '#000' : C.orange,
-              }}>
-                {cocktail.tipo === 'clasico' ? 'CLÁSICO' : 'DE AUTOR'}
-              </span>
-            </div>
+      <div style={{ padding:'16px 16px 12px' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
+          <div style={{ fontSize:'14px', color:C.text, fontWeight:700, lineHeight:'1.3' }}>{cocktail.name}</div>
+          <div style={{ display:'flex', gap:6, alignItems:'center', flexShrink:0, marginLeft:8 }}>
+            {readonly
+              ? <span style={{ fontFamily:F, fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', padding:'2px 6px', border:`1px solid ${C.border2}`, borderRadius:2 }}>CLÁSICO</span>
+              : <>
+                  {onEdit && <button onClick={onEdit} style={{ background:'none', border:'none', cursor:'pointer', color:C.orange, padding:2, display:'flex', fontSize:'12px' }}>✎</button>}
+                  {onDelete && <button onClick={onDelete} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec, padding:2, display:'flex' }}><Trash2 size={13}/></button>}
+                </>
+            }
           </div>
         </div>
+        {cocktail.description && (
+          <div style={{ fontSize:'11px', color:C.textSec, lineHeight:'1.4' }}>{cocktail.description}</div>
+        )}
       </div>
-
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', padding:'10px 16px', gap:4, borderTop:`1px solid ${C.border}`, borderBottom:`1px solid ${C.border}`, fontSize:'9px' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', padding:'12px 16px', gap:4, borderTop:`1px solid ${C.border}`, borderBottom:`1px solid ${C.border}` }}>
         <div>
-          <div style={{ color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>COSTE</div>
-          <div style={{ fontSize:'14px', color:C.orange, fontWeight:700 }}>€{cost.toFixed(2)}</div>
+          <div style={{ fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', marginBottom:3 }}>COSTE</div>
+          <div style={{ fontSize:'16px', color:C.orange, fontWeight:700 }}>€{Number(cocktail.cost).toFixed(2)}</div>
         </div>
         <div>
-          <div style={{ color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>PRECIO</div>
-          <div style={{ fontSize:'14px', color:C.text, fontWeight:700 }}>€{cocktail.precio.toFixed(2)}</div>
+          <div style={{ fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', marginBottom:3 }}>PRECIO</div>
+          <div style={{ fontSize:'16px', color:C.text, fontWeight:700 }}>€{Number(cocktail.price).toFixed(2)}</div>
         </div>
         <div>
-          <div style={{ color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>MARGEN</div>
-          <div style={{ fontSize:'14px', color:mc, fontWeight:700 }}>{margin.toFixed(1)}%</div>
+          <div style={{ fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', marginBottom:3 }}>MARGEN</div>
+          <div style={{ fontSize:'16px', color:mc, fontWeight:700 }}>{cocktail.margin}%</div>
         </div>
       </div>
-
-      <div style={{ padding:'8px 16px', borderBottom:`1px solid ${C.border}`, fontSize:'10px', color:stockStatus.sinStock>0?C.red:stockStatus.enRiesgo>0?C.amber:C.teal, fontWeight:700 }}>
-        {stockStatus.sinStock > 0 ? `✕ ${stockStatus.sinStock} sin stock` : stockStatus.enRiesgo > 0 ? `⚠ ${stockStatus.enRiesgo} en riesgo` : '● Todo en stock'}
-      </div>
-
       <button onClick={()=>setOpen(p=>!p)} style={{
         display:'flex', alignItems:'center', justifyContent:'space-between',
         padding:'8px 16px', background:C.cardAlt, border:'none', cursor:'pointer',
         fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1px',
+        borderTop:`1px solid ${C.border}`,
       }}>
         VER RECETA {open?<ChevronUp size={11}/>:<ChevronDown size={11}/>}
       </button>
-
       {open && (
-        <div style={{ padding:'10px 16px' }}>
-          {ings.map(ing=>(
-            <div key={ing.id} style={{ display:'flex', justifyContent:'space-between', padding:'4px 0', fontSize:'10px', borderBottom:`1px solid ${C.border}` }}>
-              <span style={{ color:C.textSec }}>{ing.nombre} — {ing.cantidad} {ing.unidad}</span>
-              <span style={{ color:C.teal, fontWeight:700 }}>€{(ing.cantidad*ing.coste_unitario).toFixed(3)}</span>
+        <div style={{ padding:'10px 16px 14px' }}>
+          {ings.map((ing,i)=>(
+            <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'5px 0', borderBottom:`1px solid ${C.border}`, fontSize:'11px' }}>
+              <span style={{ color:C.textSec }}>{ing.n || `${ing.name} — ${ing.qty} ${ing.unit}`}</span>
+              {ing.cost!=null && <span style={{ color:C.teal }}>€{Number(ing.cost).toFixed(3)}</span>}
             </div>
           ))}
-          <div style={{ display:'flex', justifyContent:'space-between', padding:'6px 0 0', fontSize:'11px', fontWeight:700, borderTop:`1px solid ${C.border}`, marginTop:4, paddingTop:6 }}>
-            <span style={{ color:C.textSec }}>BENEFICIO POR COPA</span>
-            <span style={{ color:mc }}>€{(cocktail.precio-cost).toFixed(2)}</span>
-          </div>
+          {!readonly && (
+            <div style={{ display:'flex', justifyContent:'space-between', padding:'7px 0 0', fontSize:'11px', fontWeight:700 }}>
+              <span style={{ color:C.textSec }}>BENEFICIO POR COPA</span>
+              <span style={{ color:mc }}>€{(Number(cocktail.price)-Number(cocktail.cost)).toFixed(2)}</span>
+            </div>
+          )}
         </div>
       )}
-
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 16px', borderTop:`1px solid ${C.border}` }}>
-        <button onClick={()=>setOpen(false)} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec, padding:0, display:'flex' }}>
-          <ChevronUp size={14} />
-        </button>
-        <div style={{ display:'flex', gap:8 }}>
-          {onEdit && <button onClick={onEdit} style={{ background:'none', border:'none', cursor:'pointer', color:C.orange, padding:'4px 8px' }}>✎ EDITAR</button>}
-          <div style={{ position:'relative' }}>
-            <button onClick={()=>setMenuOpen(p=>!p)} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec, padding:'4px 4px', fontSize:'14px' }}>···</button>
-            {menuOpen && (
-              <div style={{ position:'absolute', bottom:'100%', right:0, background:C.card, border:`1px solid ${C.border2}`, borderRadius:4, minWidth:180, zIndex:100, marginBottom:4 }}>
-                {menuOptions.map((opt,i)=>(
-                  <button key={i} onClick={opt.action} style={{ display:'block', width:'100%', padding:'10px 14px', textAlign:'left', background:'none', border:'none', borderBottom:i<menuOptions.length-1?`1px solid ${C.border}`:'none', cursor:'pointer', fontFamily:F, fontSize:'11px', color:opt.color||C.text, transition:'background 0.1s' }} onMouseEnter={e=>e.target.style.background=C.cardAlt} onMouseLeave={e=>e.target.style.background='none'}>
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
     </Card>
   );
 }
 
-// ─── EDIT COCKTAIL MODAL (Drawer FASE 2) ──────────────────────────────────────
-function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) {
-  const { customIngs=[] } = useApp() || {};
-  const allIngs = [...INGREDIENTS_DB, ...customIngs];
-  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
-
-  const [tab, setTab] = useState('identidad');
-  const [photoFile, setPhotoFile] = useState(null);
-  const [photoPreview, setPhotoPreview] = useState(cocktail?.foto_url || null);
-  const [uploading, setUploading] = useState(false);
-  const [unsaved, setUnsaved] = useState(false);
-  const [showConfirmClose, setShowConfirmClose] = useState(false);
-
-  const [form, setForm] = useState({
-    nombre: cocktail?.nombre || '',
-    tipo: cocktail?.tipo || 'autor',
-    estado: cocktail?.estado || 'borrador',
-    precio: cocktail?.precio || '',
-    descripcion: cocktail?.descripcion || '',
-    historia_coctel: cocktail?.historia_coctel || '',
-    instrucciones_preparacion: cocktail?.instrucciones_preparacion || '',
-    cristaleria: cocktail?.cristaleria || 'copa',
-    guarnicion: cocktail?.guarnicion || '',
-    tiempo_preparacion: cocktail?.tiempo_preparacion || '',
-    fecha_inicio_temporada: cocktail?.fecha_inicio_temporada || '',
-    fecha_fin_temporada: cocktail?.fecha_fin_temporada || '',
-    alergenos: cocktail?.alergenos ? JSON.parse(cocktail.alergenos) : [],
-  });
-
-  const [formIngs, setFormIngs] = useState(cocktail?.coctel_ingredientes || []);
-  const [newIng, setNewIng] = useState({ id:'', qty:'', unit:'cl' });
+// ─── EDIT COCKTAIL MODAL ──────────────────────────────────────────────────────
+function EditCocktailModal({ cocktail, allIngs, onClose, onSave }) {
+  const [form, setForm] = useState({ name: cocktail.name, description: cocktail.description || '', price: cocktail.price });
+  const [formIngs, setFormIngs] = useState(cocktail.ingredients || []);
+  const [newIng, setNewIng] = useState({ id:'', qty:'' });
   const [ingSearch, setIngSearch] = useState('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const fileInputRef = React.useRef(null);
-
-  useEffect(() => {
-    if (!cocktail) return;
-    setForm({
-      nombre: cocktail.nombre || '',
-      tipo: cocktail.tipo || 'autor',
-      estado: cocktail.estado || 'borrador',
-      precio: cocktail.precio || '',
-      descripcion: cocktail.descripcion || '',
-      historia_coctel: cocktail.historia_coctel || '',
-      instrucciones_preparacion: cocktail.instrucciones_preparacion || '',
-      cristaleria: cocktail.cristaleria || 'copa',
-      guarnicion: cocktail.guarnicion || '',
-      tiempo_preparacion: cocktail.tiempo_preparacion || '',
-      fecha_inicio_temporada: cocktail.fecha_inicio_temporada || '',
-      fecha_fin_temporada: cocktail.fecha_fin_temporada || '',
-      alergenos: cocktail.alergenos ? JSON.parse(cocktail.alergenos) : [],
-      foto_url: cocktail.foto_url || null,
-    });
-    setFormIngs(cocktail.coctel_ingredientes || []);
-    setPhotoPreview(cocktail.foto_url || null);
-    setPhotoFile(null);
-    setUnsaved(false);
-  }, [cocktail, isOpen]);
-
-  const ALLERGENS = [
-    'Trazas de cacahuetes', 'Trazas de frutos secos', 'Lácteos', 'Gluten',
-    'Huevo', 'Pescado', 'Crustáceos', 'Moluscos',
-    'Apio', 'Mostaza', 'Semillas de sésamo', 'Dióxido de azufre', 'Altramuces', 'Trazas de soja'
-  ];
-
-  const CRISTALERIA_OPTIONS = ['copa', 'vaso', 'martini', 'margarita', 'collins', 'old-fashioned', 'coupe'];
-
-  const handleFormChange = (key, value) => {
-    setForm(f => ({...f, [key]: value}));
-    setUnsaved(true);
-  };
-
-  const handlePhotoChange = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setPhotoFile(file);
-    const url = URL.createObjectURL(file);
-    setPhotoPreview(url);
-    setUnsaved(true);
-  };
-
-  const uploadPhoto = async () => {
-    if (!photoFile || !supabase) return;
-    setUploading(true);
-    try {
-      const ext = photoFile.name.split('.').pop();
-      const filename = `${cocktail?.id || 'new'}_${Date.now()}.${ext}`;
-      const { error } = await supabase.storage.from('cocteles').upload(filename, photoFile);
-      if (error) throw error;
-      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-      const photoUrl = `${SUPABASE_URL}/storage/v1/object/public/cocteles/${filename}`;
-      handleFormChange('foto_url', photoUrl);
-      setPhotoFile(null);
-    } catch (err) {
-      console.error('Photo upload error:', err);
-    } finally {
-      setUploading(false);
-    }
-  };
 
   const liveCost = formIngs.reduce((sum, fi) => {
-    return sum + (fi.cantidad * fi.coste_unitario);
+    const db = allIngs.find(d => d.id === fi.id);
+    return sum + (db ? db.cpu * parseFloat(fi.qty || 0) : 0);
   }, 0);
-  const livePrice = parseFloat(form.precio) || 0;
-  const liveMargin = livePrice > 0 ? ((livePrice - liveCost) / livePrice) * 100 : 0;
+  const livePrice = parseFloat(form.price) || 0;
+  const liveMargin = livePrice > 0 ? (livePrice - liveCost) / livePrice * 100 : 0;
   const mc = marginColor(liveMargin);
-
   const filtered = ingSearch.trim() ? filterIngredients(ingSearch, allIngs) : [];
 
   const addIng = () => {
     if (!newIng.id || !newIng.qty || parseFloat(newIng.qty) <= 0) return;
-    const ingData = allIngs.find(i => i.id === newIng.id);
-    setFormIngs(p => [...p, {
-      id: Date.now(),
-      coctel_id: cocktail?.id,
-      producto_id: newIng.id,
-      nombre: ingData?.name || newIng.id,
-      cantidad: parseFloat(newIng.qty),
-      unidad: newIng.unit,
-      coste_unitario: ingData?.cpu || 0,
-      opcional: false,
-    }]);
-    setNewIng({ id:'', qty:'', unit:'cl' });
+    setFormIngs(p => [...p, { uid: Date.now(), ...newIng }]);
+    setNewIng({ id:'', qty:'' });
     setIngSearch('');
-    setUnsaved(true);
   };
 
   const selectIngredient = (ing) => {
@@ -2196,305 +1949,140 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
     setIngSearch(ing.name);
   };
 
-  const detectClassicBase = () => {
-    const names = formIngs.map(f => f.nombre.toLowerCase());
-    const hasGin = names.some(n => n.includes('gin'));
-    const hasCampari = names.some(n => n.includes('campari'));
-    const hasVermouth = names.some(n => n.includes('vermouth') || n.includes('vermut'));
-    return hasGin && hasCampari && hasVermouth;
-  };
-
-  const suggestedPairings = () => {
-    const suggestions = [];
-    const names = formIngs.map(f => f.nombre.toLowerCase()).join(' ');
-    if (names.includes('limón') || names.includes('lima')) suggestions.push('Otros cítricos: Naranja, Pomelo');
-    if (names.includes('amaro') || names.includes('campari')) suggestions.push('Otras amargas: Fernet Branca, Averna');
-    if (detectClassicBase()) suggestions.push('Base clásica detectada: Negroni');
-    return suggestions;
-  };
-
-  const handleClose = () => {
-    if (unsaved) {
-      setShowConfirmClose(true);
-    } else {
-      onClose();
-    }
-  };
-
-  const handleSave = async () => {
-    if (photoFile) await uploadPhoto();
-    if (!form.nombre.trim() || !form.precio || formIngs.length === 0) {
-      console.error('Validación fallida');
-      return;
-    }
-    onSave({
-      id: cocktail?.id,
-      local_id: LOCAL_ID,
-      ...form,
-      alergenos: JSON.stringify(form.alergenos),
-      coctel_ingredientes: formIngs,
+  const handleSave = () => {
+    if (!form.name.trim() || !form.price || formIngs.length === 0) return;
+    const ingredients = formIngs.map(fi => {
+      const db = allIngs.find(d => d.id === fi.id);
+      const qty = parseFloat(fi.qty);
+      return { name: db?.name || fi.id, qty, unit: db?.unit || 'ml', cost: db ? db.cpu * qty : 0 };
     });
-    setUnsaved(false);
+    onSave({
+      ...cocktail,
+      name: form.name.trim(),
+      description: form.description.trim(),
+      price: parseFloat(form.price),
+      cost: liveCost,
+      margin: liveMargin.toFixed(1),
+      ingredients
+    });
   };
-
-  if (!isOpen) return null;
 
   return (
-    <>
-      <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:1999, onClick:handleClose }}/>
-      <div style={{ position:'fixed', right:0, top:0, bottom:0, width:580, background:C.card, zIndex:2000, overflowY:'auto', borderLeft:`1px solid ${C.border2}`, boxShadow:'-4px 0 12px rgba(0,0,0,0.4)' }}>
-        <div style={{ padding:'24px 24px', borderBottom:`1px solid ${C.border2}`, display:'flex', justifyContent:'space-between', alignItems:'center', position:'sticky', top:0, background:C.card, zIndex:10 }}>
-          <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>EDITAR CÓCTEL</span>
-          <button onClick={handleClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
-            <X size={20}/>
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
+      <Card accent={C.orange} sx={{ padding:28, maxWidth:700, width:'90%', maxHeight:'90vh', overflowY:'auto' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+          <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>EDITAR RECETA</span>
+          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
+            <X size={18}/>
           </button>
         </div>
 
-        <div style={{ display:'flex', gap:0, borderBottom:`1px solid ${C.border2}`, padding:'0 24px' }}>
-          {['identidad', 'receta', 'carta', 'alergenos'].map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{
-              flex:1, padding:'14px 0', fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700,
-              background:'none', border:'none', cursor:'pointer', color:tab===t?C.orange:C.textSec,
-              borderBottom:tab===t?`2px solid ${C.orange}`:'2px solid transparent', transition:'all 0.2s'
-            }}>
-              {t.toUpperCase()}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ padding:'24px 24px' }}>
-          {tab === 'identidad' && (
-            <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
-              <div style={{ display:'flex', gap:16 }}>
-                <div style={{ position:'relative', width:100, height:100, borderRadius:4, background:C.cardAlt, border:`1px dashed ${C.border2}`, overflow:'hidden' }}>
-                  {photoPreview ? (
-                    <img src={photoPreview} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
-                  ) : (
-                    <div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec, fontSize:'28px' }}>🍹</div>
-                  )}
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} style={{ position:'absolute', inset:0, opacity:0, cursor:'pointer' }}/>
-                </div>
-                <div style={{ flex:1, display:'flex', flexDirection:'column', gap:8 }}>
-                  <label style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>FOTO</label>
-                  <Btn variant="outline" onClick={() => fileInputRef.current?.click()} sx={{ fontSize:'11px', padding:'8px 12px' }}>
-                    {photoFile ? 'Cambiar' : 'Subir'} Foto
-                  </Btn>
-                  {uploading && <span style={{ fontSize:'10px', color:C.teal }}>Subiendo...</span>}
-                </div>
-              </div>
-
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-                <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>NOMBRE *</div>
-                  <input value={form.nombre} onChange={e => handleFormChange('nombre', e.target.value)}
-                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                  />
-                </div>
-                <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>PRECIO (€) *</div>
-                  <input type="number" step="0.5" min="0" value={form.precio} onChange={e => handleFormChange('precio', e.target.value)}
-                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-                <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>TIPO</div>
-                  <select value={form.tipo} onChange={e => handleFormChange('tipo', e.target.value)}
-                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                  >
-                    <option value="clasico">CLÁSICO</option>
-                    <option value="autor">DE AUTOR</option>
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>ESTADO</div>
-                  <select value={form.estado} onChange={e => handleFormChange('estado', e.target.value)}
-                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                  >
-                    <option value="activo">ACTIVO</option>
-                    <option value="borrador">BORRADOR</option>
-                    <option value="revision">REVISIÓN</option>
-                    <option value="temporada">TEMPORADA</option>
-                    <option value="retirado">RETIRADO</option>
-                  </select>
-                </div>
-              </div>
-
-              {form.estado === 'temporada' && (
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-                  <div>
-                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>DESDE</div>
-                    <input type="date" value={form.fecha_inicio_temporada} onChange={e => handleFormChange('fecha_inicio_temporada', e.target.value)}
-                      style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                    />
-                  </div>
-                  <div>
-                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>HASTA</div>
-                    <input type="date" value={form.fecha_fin_temporada} onChange={e => handleFormChange('fecha_fin_temporada', e.target.value)}
-                      style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {tab === 'receta' && (
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:18 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 200px', gap:24 }}>
+          <div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
               <div>
-                <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2px', marginBottom:12, fontWeight:700 }}>INGREDIENTES</div>
-                {formIngs.length > 0 && (
-                  <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:14 }}>
-                    {formIngs.map((fi, idx) => (
-                      <div key={idx} style={{ display:'flex', alignItems:'center', gap:8, padding:'10px', background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:3 }}>
-                        <div style={{ flex:1, minWidth:0 }}>
-                          <div style={{ fontSize:'11px', color:C.text, fontWeight:700 }}>{fi.nombre}</div>
-                          <div style={{ fontSize:'9px', color:C.textSec }}>{fi.cantidad} {fi.unidad} • €{(fi.cantidad * fi.coste_unitario).toFixed(3)}</div>
-                        </div>
-                        <button onClick={() => { setFormIngs(p => p.filter((_, i) => i !== idx)); setUnsaved(true); }} style={{ background:'none', border:'none', cursor:'pointer', color:C.red, padding:0 }}>
-                          <Trash2 size={13}/>
-                        </button>
+                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE *</div>
+                <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}
+                  style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>PRECIO (€) *</div>
+                <input value={form.price} onChange={e => setForm(f => ({...f, price: e.target.value}))}
+                  placeholder="12.00" type="number" step="0.5" min="0"
+                  style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>DESCRIPCIÓN</div>
+              <input value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
+                style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
+              />
+            </div>
+
+            <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>INGREDIENTES *</div>
+
+            {formIngs.length > 0 && (
+              <div style={{ display:'flex', flexDirection:'column', gap:5, marginBottom:10 }}>
+                {formIngs.map(fi => {
+                  const db = allIngs.find(d => d.id === fi.id);
+                  const cost = db ? db.cpu * parseFloat(fi.qty) : 0;
+                  return (
+                    <div key={fi.uid} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:3 }}>
+                      <span style={{ flex:1, fontSize:'12px', color:C.text }}>{db?.name}</span>
+                      <span style={{ fontSize:'12px', color:C.textSec, minWidth:55 }}>{fi.qty} {db?.unit}</span>
+                      <span style={{ fontSize:'12px', color:C.teal, minWidth:52, textAlign:'right', fontWeight:700 }}>€{cost.toFixed(3)}</span>
+                      <button onClick={() => setFormIngs(p => p.filter(i => i.uid !== fi.uid))} style={{ background:'none',border:'none',cursor:'pointer',color:'#EF4444',padding:'0 2px',display:'flex' }}>
+                        <Trash2 size={13}/>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ display:'flex', gap:8, alignItems:'flex-end', position:'relative' }}>
+              <div style={{ flex:1, position:'relative' }}>
+                <input
+                  value={ingSearch}
+                  onChange={e => { setIngSearch(e.target.value); setNewIng(p => ({...p, id:''})); }}
+                  placeholder="🔍 Busca ingrediente..."
+                  style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                />
+                {ingSearch.trim() && filtered.length > 0 && (
+                  <div style={{ position:'absolute', top:'100%', left:0, right:0, background:C.card, border:`1px solid ${C.border2}`, borderTop:'none', borderRadius:'0 0 3px 3px', maxHeight:200, overflowY:'auto', zIndex:10 }}>
+                    {filtered.slice(0, 8).map(ing => (
+                      <div key={ing.id} onClick={() => selectIngredient(ing)} style={{ padding:'8px 12px', cursor:'pointer', borderBottom:`1px solid ${C.border}`, background:newIng.id === ing.id?`${C.orange}22`:'transparent' }}>
+                        <div style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{ing.name}</div>
+                        <div style={{ fontSize:'10px', color:C.textSec }}>@{ing.cat} • {ing.unit}</div>
                       </div>
                     ))}
                   </div>
                 )}
-
-                <div style={{ position:'relative', marginBottom:12 }}>
-                  <input value={ingSearch} onChange={e => { setIngSearch(e.target.value); setNewIng(p => ({...p, id:''})); }}
-                    placeholder="🔍 Buscar..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                  />
-                  {ingSearch.trim() && filtered.length > 0 && (
-                    <div style={{ position:'absolute', top:'100%', left:0, right:0, background:C.card, border:`1px solid ${C.border2}`, borderTop:'none', borderRadius:'0 0 3px 3px', maxHeight:150, overflowY:'auto', zIndex:20 }}>
-                      {filtered.slice(0, 6).map(ing => (
-                        <div key={ing.id} onClick={() => selectIngredient(ing)} style={{ padding:'8px 12px', cursor:'pointer', borderBottom:`1px solid ${C.border}`, background:newIng.id===ing.id?`${C.orange}22`:'transparent', fontSize:'11px', color:C.text }}>
-                          {ing.name}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ display:'flex', gap:8, marginBottom:12 }}>
-                  <input type="number" step="0.5" min="0" value={newIng.qty} onChange={e => setNewIng(p => ({...p, qty: e.target.value}))}
-                    placeholder="Cant." onKeyDown={e => e.key==='Enter' && addIng()}
-                    style={{ width:60, padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                  />
-                  <select value={newIng.unit} onChange={e => setNewIng(p => ({...p, unit: e.target.value}))}
-                    style={{ width:60, padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                  >
-                    <option>cl</option>
-                    <option>ml</option>
-                    <option>ud</option>
-                    <option>g</option>
-                  </select>
-                  <Btn onClick={addIng} sx={{ flex:1, padding:'8px', fontSize:'10px' }}>ADD</Btn>
-                </div>
               </div>
-
-              <div>
-                <div style={{ fontSize:'10px', color:C.amber, letterSpacing:'2px', marginBottom:12, fontWeight:700 }}>SUGERENCIAS IA</div>
-                <Card sx={{ padding:14, marginBottom:12 }}>
-                  <div style={{ fontSize:'10px', color:C.teal, marginBottom:8, fontWeight:700 }}>Coste Total: €{liveCost.toFixed(2)}</div>
-                  <div style={{ fontSize:'10px', color:C.textSec, marginBottom:12 }}>Precio: €{livePrice.toFixed(2)} | Margen: <span style={{ color:mc, fontWeight:700 }}>{liveMargin.toFixed(1)}%</span></div>
-                  {detectClassicBase() && <div style={{ fontSize:'10px', color:C.orange, marginBottom:8 }}>✓ Base clásica detectada (Gin + Campari + Vermouth)</div>}
-                  {suggestedPairings().map((s, i) => (
-                    <div key={i} style={{ fontSize:'10px', color:C.teal, marginBottom:6 }}>→ {s}</div>
-                  ))}
-                </Card>
+              <div style={{ width:76, flexShrink:0 }}>
+                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CANT.</div>
+                <input value={newIng.qty} onChange={e => setNewIng(p => ({...p, qty: e.target.value}))}
+                  onKeyDown={e => e.key === 'Enter' && addIng()}
+                  placeholder="0.5" type="number" step="0.5" min="0"
+                  style={{ width:'100%', padding:'9px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none' }}
+                />
               </div>
+              <Btn variant="outline" onClick={addIng} sx={{ padding:'9px 14px', flexShrink:0, alignSelf:'flex-end' }}>
+                <Plus size={13}/> ADD
+              </Btn>
             </div>
-          )}
+          </div>
 
-          {tab === 'carta' && (
-            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-              <div>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>DESCRIPCIÓN</div>
-                <input value={form.descripcion} onChange={e => handleFormChange('descripcion', e.target.value)}
-                  placeholder="Breve descripción para la carta..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:60 }}
-                />
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            <Card accent={mc} sx={{ padding:20, flex:1 }}>
+              <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:16 }}>PREVIEW</div>
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>COSTE</div>
+                <div style={{ fontSize:'28px', color:C.orange, fontWeight:700, lineHeight:1 }}>€{liveCost.toFixed(2)}</div>
               </div>
-              <div>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>HISTORIA</div>
-                <textarea value={form.historia_coctel} onChange={e => handleFormChange('historia_coctel', e.target.value)}
-                  placeholder="Origen y tradición del cóctel..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:80, resize:'vertical' }}
-                />
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>PRECIO</div>
+                <div style={{ fontSize:'28px', color:C.text, fontWeight:700, lineHeight:1 }}>€{livePrice.toFixed(2)}</div>
               </div>
-              <div>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>INSTRUCCIONES</div>
-                <textarea value={form.instrucciones_preparacion} onChange={e => handleFormChange('instrucciones_preparacion', e.target.value)}
-                  placeholder="Modo de preparación paso a paso..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:80, resize:'vertical' }}
-                />
-              </div>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-                <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>CRISTALERÍA</div>
-                  <select value={form.cristaleria} onChange={e => handleFormChange('cristaleria', e.target.value)}
-                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                  >
-                    {CRISTALERIA_OPTIONS.map(opt => (
-                      <option key={opt} value={opt}>{opt.toUpperCase()}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>TIEMPO (min)</div>
-                  <input type="number" min="0" value={form.tiempo_preparacion} onChange={e => handleFormChange('tiempo_preparacion', e.target.value)}
-                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                  />
+              <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14 }}>
+                <div style={{ fontSize:'10px', color:C.textSec, marginBottom:6 }}>MARGEN</div>
+                <div style={{ fontSize:'36px', fontWeight:700, color:mc, lineHeight:1 }}>
+                  {livePrice > 0 ? `${liveMargin.toFixed(1)}%` : '—'}
                 </div>
               </div>
-              <div>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>GUARNICIÓN</div>
-                <input value={form.guarnicion} onChange={e => handleFormChange('guarnicion', e.target.value)}
-                  placeholder="p.ej: Twist de naranja, aceituna..." style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                />
-              </div>
-            </div>
-          )}
-
-          {tab === 'alergenos' && (
-            <div>
-              <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'2px', marginBottom:16, fontWeight:700 }}>MARCAR LOS QUE APLIQUEN</div>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-                {ALLERGENS.map(allg => (
-                  <button key={allg} onClick={() => {
-                    handleFormChange('alergenos', form.alergenos.includes(allg) ? form.alergenos.filter(a => a!==allg) : [...form.alergenos, allg]);
-                  }} style={{
-                    padding:'12px', borderRadius:3, fontFamily:F, fontSize:'10px', border:`1px solid ${form.alergenos.includes(allg)?C.orange:C.border2}`,
-                    background:form.alergenos.includes(allg)?`${C.orange}22`:C.cardAlt, color:form.alergenos.includes(allg)?C.orange:C.textSec,
-                    cursor:'pointer', transition:'all 0.2s'
-                  }}>
-                    {form.alergenos.includes(allg) ? '✓' : '○'} {allg}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+            </Card>
+          </div>
         </div>
 
-        <div style={{ padding:'24px 24px', borderTop:`1px solid ${C.border2}`, display:'flex', gap:12, position:'sticky', bottom:0, background:C.card }}>
-          <Btn variant="outline" onClick={handleClose} sx={{ flex:1, padding:'12px' }}>CANCELAR</Btn>
-          <Btn onClick={handleSave} sx={{ flex:1, padding:'12px' }}>GUARDAR</Btn>
+        <div style={{ display:'flex', gap:10, marginTop:24 }}>
+          <Btn variant="outline" onClick={onClose} sx={{ flex:1, padding:'10px' }}>CANCELAR</Btn>
+          <Btn onClick={handleSave} sx={{ flex:1, padding:'10px' }}>GUARDAR CAMBIOS</Btn>
         </div>
-      </div>
-
-      {showConfirmClose && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2001 }}>
-          <Card sx={{ padding:28, maxWidth:380 }}>
-            <div style={{ marginBottom:20 }}>
-              <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'2px', fontWeight:700 }}>¿DESCARTAR CAMBIOS?</span>
-            </div>
-            <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, marginBottom:24 }}>Los cambios sin guardar se perderán.</p>
-            <div style={{ display:'flex', gap:10 }}>
-              <Btn variant="outline" onClick={() => setShowConfirmClose(false)} sx={{ flex:1, padding:'10px' }}>SEGUIR EDITANDO</Btn>
-              <Btn onClick={() => { setShowConfirmClose(false); setUnsaved(false); onClose(); }} sx={{ flex:1, padding:'10px' }}>DESCARTAR</Btn>
-            </div>
-          </Card>
-        </div>
-      )}
-    </>
+      </Card>
+    </div>
   );
 }
 
@@ -2502,90 +2090,29 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
 function Carta() {
   const { customIngs = [] } = useApp() || {};
   const allIngs = [...INGREDIENTS_DB, ...customIngs];
-  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
 
   const [tab, setTab]                   = useState('clasicos');
-  const [cocteles, setCocteles]         = useState([]);
-  const [loading, setLoading]           = useState(false);
+  const [showForm, setShowForm]         = useState(false);
+  const [customs, setCustoms]           = useState(() => {
+    try { return JSON.parse(localStorage.getItem('barops_custom_cocktails')) || []; }
+    catch { return []; }
+  });
+  const [form, setForm]                 = useState({ name:'', description:'', price:'' });
+  const [formIngs, setFormIngs]         = useState([]);
+  const [newIng, setNewIng]             = useState({ id:'', qty:'' });
+  const [toast, setToast]               = useState(null);
+  const [ingSearch, setIngSearch]       = useState('');
   const [showImportCocteles, setShowImportCocteles] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingCocktail, setEditingCocktail] = useState(null);
-  const [toast, setToast]               = useState(null);
-  const [showForm, setShowForm]         = useState(false);
-  const [form, setForm]                 = useState({ name:'', tipo:'autor', description:'', price:'' });
-  const [formIngs, setFormIngs]         = useState([]);
-  const [newIng, setNewIng]             = useState({ id:'', qty:'' });
-  const [ingSearch, setIngSearch]       = useState('');
-
-  const fetchCocteles = async () => {
-    if (!supabase) return;
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('cocteles')
-        .select('*, coctel_ingredientes(*)')
-        .eq('local_id', LOCAL_ID)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      setCocteles(data || []);
-    } catch (err) {
-      setToast('Error al cargar cócteles');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
-    fetchCocteles();
-  }, []);
+    localStorage.setItem('barops_custom_cocktails', JSON.stringify(customs));
+  }, [customs]);
 
-  const updateCoctel = async (id, changes) => {
-    if (!supabase) return;
-    try {
-      const { error } = await supabase.from('cocteles').update(changes).eq('id', id);
-      if (error) throw error;
-      setCocteles(prev => prev.map(c => c.id === id ? {...c, ...changes} : c));
-      setToast('Cóctel actualizado');
-    } catch (err) {
-      setToast('Error al actualizar');
-      console.error(err);
-    }
-  };
-
-  const deleteCoctel = async (id) => {
-    if (!supabase) return;
-    try {
-      const { error } = await supabase.from('cocteles').delete().eq('id', id);
-      if (error) throw error;
-      setCocteles(prev => prev.filter(c => c.id !== id));
-      setToast('Cóctel eliminado');
-    } catch (err) {
-      setToast('Error al eliminar');
-      console.error(err);
-    }
-  };
-
-  const counts = {
-    clasicos:   cocteles.filter(c => c.tipo==='clasico' && c.estado==='activo').length,
-    autor:      cocteles.filter(c => c.tipo==='autor'   && c.estado==='activo').length,
-    temporada:  cocteles.filter(c => c.estado==='temporada').length,
-    borradores: cocteles.filter(c => c.estado==='borrador').length,
-    revision:   cocteles.filter(c => c.estado==='revision').length,
-    retirados:  cocteles.filter(c => c.estado==='retirado').length,
-  };
-
-  const TAB_FILTER = {
-    clasicos:   c => c.tipo==='clasico' && c.estado==='activo',
-    autor:      c => c.tipo==='autor'   && c.estado==='activo',
-    temporada:  c => c.estado==='temporada',
-    borradores: c => c.estado==='borrador',
-    revision:   c => c.estado==='revision',
-    retirados:  c => c.estado==='retirado',
-  };
-  const visibles = cocteles.filter(TAB_FILTER[tab] || (()=>true));
-
+  // Group ingredients for select with fuzzy search
   const filtered = ingSearch.trim() ? filterIngredients(ingSearch, allIngs) : allIngs;
+
   const liveCost = formIngs.reduce((sum,fi)=>{
     const db = allIngs.find(d=>d.id===fi.id);
     return sum + (db ? db.cpu * parseFloat(fi.qty||0) : 0);
@@ -2607,43 +2134,31 @@ function Carta() {
   };
 
   const resetForm = () => {
-    setForm({ name:'', tipo:'autor', description:'', price:'' });
+    setForm({ name:'', description:'', price:'' });
     setFormIngs([]);
     setNewIng({ id:'', qty:'' });
     setIngSearch('');
     setShowForm(false);
   };
 
-  const saveForm = async () => {
-    if (!form.name.trim()||!form.price||formIngs.length===0||!supabase) return;
-    try {
-      const ings = formIngs.map(fi=>{
-        const db = allIngs.find(d=>d.id===fi.id);
-        const qty = parseFloat(fi.qty);
-        return { name:db?.name||fi.id, producto_id:fi.id, cantidad:qty, unidad:db?.unit||'cl', coste_unitario:db?db.cpu:0 };
-      });
-      const { data: cData, error: cErr } = await supabase.from('cocteles').insert({
-        local_id: LOCAL_ID,
-        nombre: form.name.trim(),
-        tipo: form.tipo,
-        estado: 'borrador',
-        descripcion: form.description.trim(),
-        precio: parseFloat(form.price),
-      }).select().single();
-      if (cErr) throw cErr;
-      const iData = ings.map(i=>({coctel_id:cData.id,...i}));
-      const { error: iErr } = await supabase.from('coctel_ingredientes').insert(iData);
-      if (iErr) throw iErr;
-      await fetchCocteles();
-      setToast(`"${form.name.trim()}" añadido a cócteles`);
-      resetForm();
-    } catch (err) {
-      setToast('Error al guardar cóctel');
-      console.error(err);
-    }
+  const saveForm = () => {
+    if (!form.name.trim()||!form.price||formIngs.length===0) return;
+    const ingredients = formIngs.map(fi=>{
+      const db = allIngs.find(d=>d.id===fi.id);
+      const qty = parseFloat(fi.qty);
+      return { name:db?.name||fi.id, qty, unit:db?.unit||'cl', cost: db ? db.cpu*qty : 0 };
+    });
+    setCustoms(p=>[...p,{
+      id:Date.now(), name:form.name.trim(), description:form.description.trim(),
+      price:parseFloat(form.price), cost:liveCost,
+      margin: liveMargin.toFixed(1), ingredients,
+    }]);
+    setToast(`"${form.name.trim()}" añadido a la carta`);
+    resetForm();
+    setTab('autor');
   };
 
-  const openForm = () => { setShowForm(true); };
+  const openForm = () => { setShowForm(true); setTab('autor'); };
 
   return (
     <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
@@ -2654,7 +2169,7 @@ function Carta() {
         <div>
           <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>CARTA & COSTES</h1>
           <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
-            {counts.clasicos + counts.autor} activos · Gestión completa de cócteles en Supabase
+            {CLASSIC_COCKTAILS_DATA.length} clásicos · {customs.length} de autor · Costes calculados con precios de proveedor actuales
           </p>
         </div>
         <div style={{ display:'flex', gap:10 }}>
@@ -2670,137 +2185,58 @@ function Carta() {
       {showImportCocteles && (
         <ImportCocktailsModal
           onClose={() => setShowImportCocteles(false)}
-          onSave={async (items) => {
-            if (!supabase || !items.length) return;
-            try {
-              const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
-              const insertData = items.map(item => ({
-                local_id: LOCAL_ID,
-                nombre: item.name,
-                tipo: item.tipo,
-                estado: 'borrador',
-                descripcion: item.description,
-                precio: item.price,
-              }));
-              const { error } = await supabase.from('cocteles').insert(insertData);
-              if (error) throw error;
-              await fetchCocteles();
-              setShowImportCocteles(false);
-              setToast(`${items.length} cócteles importados como borradores`);
-            } catch (err) {
-              setToast('Error al importar cócteles');
-              console.error(err);
+          onSave={(items, type) => {
+            if (type === 'clasicos') {
+              setToast(`${items.length} cócteles clásicos — edita en la sección CLÁSICOS`);
+            } else {
+              setCustoms(prev => [...prev, ...items]);
+              setToast(`${items.length} cócteles de autor importados`);
             }
           }}
         />
       )}
 
-      {editingCocktail && (
+      {showEditModal && editingCocktail && (
         <EditCocktailModal
           cocktail={editingCocktail}
-          isOpen={showEditModal}
-          productos={productos}
+          allIngs={allIngs}
           onClose={() => { setShowEditModal(false); setEditingCocktail(null); }}
-          onSave={async (updated) => {
-            if (!supabase) return;
-            try {
-              const { coctel_ingredientes, id, local_id, ...coctelData } = updated;
-              const coctelUpdate = {
-                ...coctelData,
-                precio: parseFloat(coctelData.precio) || 0,
-                tiempo_preparacion: parseInt(coctelData.tiempo_preparacion) || 0,
-              };
-              const { error: cErr } = await supabase.from('cocteles').update(coctelUpdate).eq('id', id);
-              if (cErr) throw cErr;
-
-              if (coctel_ingredientes && coctel_ingredientes.length > 0) {
-                const { error: delErr } = await supabase.from('coctel_ingredientes').delete().eq('coctel_id', updated.id);
-                if (delErr) throw delErr;
-                const ingsData = coctel_ingredientes.map(i => ({
-                  coctel_id: updated.id,
-                  producto_id: i.producto_id,
-                  nombre: i.nombre,
-                  cantidad: i.cantidad,
-                  unidad: i.unidad,
-                  coste_unitario: i.coste_unitario,
-                  opcional: i.opcional || false,
-                }));
-                const { error: insErr } = await supabase.from('coctel_ingredientes').insert(ingsData);
-                if (insErr) throw insErr;
-              }
-              await fetchCocteles();
-              setToast(`"${updated.nombre}" actualizado`);
-              setShowEditModal(false);
-              setEditingCocktail(null);
-            } catch (err) {
-              setToast('Error al actualizar cóctel');
-              console.error(err);
-            }
+          onSave={(updated) => {
+            setCustoms(prev => prev.map(c => c.id === updated.id ? updated : c));
+            setToast(`"${updated.name}" actualizado`);
+            setShowEditModal(false);
+            setEditingCocktail(null);
           }}
         />
       )}
 
       {/* Tabs */}
-      <div style={{ display:'flex', borderBottom:`1px solid ${C.border2}`, marginBottom:22, overflowX:'auto' }}>
-        {[
-          ['clasicos', `CLÁSICOS (${counts.clasicos})`],
-          ['autor', `DE AUTOR (${counts.autor})`],
-          ['temporada', `TEMPORADA (${counts.temporada})`],
-          ['borradores', `BORRADORES (${counts.borradores})`],
-          ['revision', `REVISIÓN (${counts.revision})`],
-          ['retirados', `RETIRADOS (${counts.retirados})`],
-        ].map(([id,label])=>(
+      <div style={{ display:'flex', borderBottom:`1px solid ${C.border2}`, marginBottom:22 }}>
+        {[['clasicos',`CLÁSICOS (${CLASSIC_COCKTAILS_DATA.length})`],['autor',`DE AUTOR (${customs.length})`]].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
-            padding:'10px 20px', background:'transparent', cursor:'pointer',
-            fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700, whiteSpace:'nowrap',
+            padding:'10px 26px', background:'transparent', cursor:'pointer',
+            fontFamily:F, fontSize:'10px', letterSpacing:'3px', fontWeight:700,
             color:tab===id?C.orange:C.textSec, border:'none',
             borderBottom:tab===id?`2px solid ${C.orange}`:'2px solid transparent', marginBottom:'-1px',
           }}>{label}</button>
         ))}
       </div>
 
-      {/* Loading state */}
-      {loading && (
-        <div style={{ display:'flex', justifyContent:'center', alignItems:'center', minHeight:300 }}>
-          <div style={{ fontSize:'12px', color:C.textSec }}>⏳ Cargando cócteles...</div>
+      {/* CLÁSICOS */}
+      {tab==='clasicos' && (
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14 }}>
+          {CLASSIC_COCKTAILS_DATA.map(c=><CocktailCard key={c.id} cocktail={c} readonly/>)}
         </div>
       )}
 
-      {/* Grid */}
-      {!loading && (
-        visibles.length > 0 ? (
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14 }}>
-            {visibles.map(c=>(
-              <CocktailCard
-                key={c.id}
-                cocktail={c}
-                productos={[]}
-                onUpdate={updateCoctel}
-                onDelete={deleteCoctel}
-                onEdit={()=>{ setEditingCocktail(c); setShowEditModal(true); }}
-              />
-            ))}
-          </div>
-        ) : (
-          <div style={{ textAlign:'center', padding:'64px 20px' }}>
-            <div style={{ fontFamily:F, fontSize:'40px', color:C.border2, marginBottom:20 }}>◇</div>
-            <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>
-              {tab==='borradores'?'TODAVÍA NO HAY BORRADORES':'NO HAY CÓCTELES EN ESTA CATEGORÍA'}
-            </div>
-            {(tab==='borradores'||tab==='clasicos'||tab==='autor')&&(
-              <Btn onClick={openForm} sx={{ marginTop:20, padding:'11px 28px', fontSize:'11px' }}>
-                <Plus size={14}/> CREAR CÓCTEL
-              </Btn>
-            )}
-          </div>
-        )
-      )}
-
-      {/* New/Edit Form Modal */}
-      {showForm && (
+      {/* DE AUTOR */}
+      {tab==='autor' && (
+        <div>
+          {/* Add form */}
+          {showForm && (
             <Card accent={C.orange} sx={{ padding:24, marginBottom:24 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
-                <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>NUEVO CÓCTEL</span>
+                <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>NUEVO CÓCTEL DE AUTOR</span>
                 <button onClick={resetForm} style={{ background:'none',border:'none',cursor:'pointer',color:C.textSec,display:'flex' }}><X size={16}/></button>
               </div>
 
@@ -2808,18 +2244,9 @@ function Carta() {
 
                 {/* Left: fields */}
                 <div>
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginBottom:14 }}>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
                     <div>
-                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>TIPO *</div>
-                      <select value={form.tipo} onChange={e=>setForm(f=>({...f,tipo:e.target.value}))}
-                        style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none' }}
-                      >
-                        <option value="clasico">CLÁSICO</option>
-                        <option value="autor">DE AUTOR</option>
-                      </select>
-                    </div>
-                    <div>
-                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE *</div>
+                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE DEL CÓCTEL *</div>
                       <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
                         placeholder="Ej: Paradiso Sour"
                         style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
@@ -2953,6 +2380,32 @@ function Carta() {
               </div>
             </Card>
           )}
+
+          {/* Empty state */}
+          {customs.length===0&&!showForm&&(
+            <div style={{ textAlign:'center', padding:'64px 20px' }}>
+              <div style={{ fontFamily:F, fontSize:'40px', color:C.border2, marginBottom:20 }}>◇</div>
+              <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>TODAVÍA NO HAY CÓCTELES DE AUTOR REGISTRADOS</div>
+              <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginBottom:28, lineHeight:'1.7' }}>
+                Añade los cócteles de la carta de Paradiso para calcular<br/>
+                su coste real y margen con tus precios de proveedor actuales.
+              </div>
+              <Btn onClick={openForm} sx={{ padding:'11px 28px', fontSize:'11px' }}>
+                <Plus size={14}/> AÑADIR PRIMER CÓCTEL DE AUTOR
+              </Btn>
+            </div>
+          )}
+
+          {/* Custom cocktails grid */}
+          {customs.length>0&&(
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14 }}>
+              {customs.map(c=>(
+                <CocktailCard key={c.id} cocktail={c} onEdit={()=>{ setEditingCocktail(c); setShowEditModal(true); }} onDelete={()=>setCustoms(p=>p.filter(x=>x.id!==c.id))}/>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -3169,78 +2622,45 @@ function Local({ localName, onLocalNameChange }) {
   }, []);
 
   const fetchLocalData = async () => {
-    // Primero cargamos desde localStorage instantáneamente
-    const cached = {
-      nombre:   localStorage.getItem('barops_local_nombre') || '',
-      direccion: localStorage.getItem('barops_local_direccion') || '',
-      ciudad:   localStorage.getItem('barops_local_ciudad') || '',
-      aforo:    localStorage.getItem('barops_local_aforo') || '',
-    };
-    if (cached.nombre) setFormData(cached);
-
-    // Luego intentamos leer de Supabase (best-effort)
     try {
-      if (!supabase) throw new Error('Sin Supabase');
-      const { data, error } = await supabase
-        .from('locales')
-        .select('nombre, direccion, ciudad, aforo')
-        .eq('id', LOCAL_ID)
-        .maybeSingle(); // no falla si no existe la fila
-      if (!error && data) {
-        setFormData({
-          nombre:   data.nombre    || cached.nombre,
-          direccion: data.direccion || cached.direccion,
-          ciudad:   data.ciudad    || cached.ciudad,
-          aforo:    data.aforo     || cached.aforo,
-        });
-      }
+      if (!supabase) throw new Error('Supabase no conectado');
+      const { data, error } = await supabase.from('locales').select('*').eq('id', LOCAL_ID).single();
+      if (error) throw error;
+      setFormData({
+        nombre: data.nombre || '',
+        direccion: data.direccion || '',
+        ciudad: data.ciudad || '',
+        aforo: data.aforo || ''
+      });
     } catch (err) {
-      console.warn('Supabase no disponible, usando caché local:', err.message);
+      console.error('Error fetching local data:', err);
+      setToast('Error al cargar datos del local');
     } finally {
       setLoading(false);
     }
   };
 
   const handleSave = async () => {
-    if (!formData.nombre.trim()) {
-      setToast('El nombre del local no puede estar vacío');
-      return;
-    }
     setSaving(true);
     try {
-      // 1. Guardar SIEMPRE en localStorage primero (garantizado)
-      localStorage.setItem('barops_local_nombre',    formData.nombre);
-      localStorage.setItem('barops_local_direccion', formData.direccion);
-      localStorage.setItem('barops_local_ciudad',    formData.ciudad);
-      localStorage.setItem('barops_local_aforo',     formData.aforo);
-      // Actualizar también la clave que usa la sidebar
+      if (!supabase) throw new Error('Supabase no conectado');
+      const updateData = { nombre: formData.nombre, direccion: formData.direccion, ciudad: formData.ciudad, aforo: formData.aforo };
+
+      const { error } = await supabase.from('locales').update(updateData).eq('id', LOCAL_ID);
+      if (error) {
+        console.error('Supabase error:', error);
+        throw new Error(error.message || 'Error al guardar en Supabase');
+      }
       localStorage.setItem('barops_local_name', formData.nombre);
       onLocalNameChange(formData.nombre);
-
-      // 2. Intentar guardar en Supabase (best-effort, no bloquea)
-      if (supabase) {
-        const { error } = await supabase
-          .from('locales')
-          .upsert(
-            { id: LOCAL_ID, nombre: formData.nombre, direccion: formData.direccion, ciudad: formData.ciudad, aforo: parseInt(formData.aforo) || null },
-            { onConflict: 'id' }
-          );
-        if (error) {
-          console.warn('Supabase save warning (datos guardados localmente):', error.message);
-          setToast('Guardado localmente ✓  (Supabase: ' + error.message + ')');
-          return;
-        }
-      }
-
-      setToast('Cambios guardados correctamente ✓');
+      setToast('Cambios guardados correctamente');
     } catch (err) {
-      console.error('Error saving:', err);
-      setToast('Guardado localmente ✓ (sin conexión a BD)');
+      console.error('Error saving local data:', err);
+      setToast(`Error: ${err.message || 'No se pudo guardar'}`);
     } finally {
       setSaving(false);
     }
   };
-
 
   const togglePref = (key) => {
     const newVal = !prefs[key];
@@ -3399,414 +2819,41 @@ function Local({ localName, onLocalNameChange }) {
 }
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
-
-// ─── DRAWER: LOCAL SETTINGS ───────────────────────────────────────────────────
-function LocalDrawer({ isOpen, onClose, localName, onLocalNameChange }) {
-  const [tab, setTab] = useState('perfil');
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState(null);
-  
-  // PERFIL tab state
-  const [perfil, setPerfil] = useState({
-    nombre: '', tipo: 'Coctelería', direccion: '', ciudad: '', 
-    telefono: '', email: '', aforo: '', logo_filename: ''
-  });
-  const [logoPreview, setLogoPreview] = useState('');
-  const [operativo, setOperativo] = useState({
-    umbral_dias: 3, proveedor: '', telefono_proveedor: ''
-  });
-  
-  // PREFS tab state
-  const [prefs, setPrefs] = useState({
-    stock_alerts: true, shift_alerts: true, weekly_report: false,
-    compact_mode: false, weekly_day: 'Lunes'
-  });
-  const [users, setUsers] = useState([{ id:1, email:'admin@barops.es', rol:'ADMIN', avatar:'AB' }]);
-  const [inviteEmail, setInviteEmail] = useState('');
-
-  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
-
-  useEffect(() => {
-    if (isOpen) fetchData();
-  }, [isOpen]);
-
-  const fetchData = async () => {
-    // Cargar desde localStorage inmediatamente
-    const cached = JSON.parse(localStorage.getItem('barops_perfil') || '{}');
-    if (cached.nombre) setPerfil(p => ({...p, ...cached}));
-    
-    try {
-      if (!supabase) throw new Error('Supabase no conectado');
-      const { data, error } = await supabase
-        .from('locales')
-        .select('*')
-        .eq('id', LOCAL_ID)
-        .maybeSingle(); // no falla si la fila no existe aún
-
-      if (!error && data) {
-        const perfilData = {
-          nombre: data.nombre || cached.nombre || '',
-          tipo: data.tipo || cached.tipo || 'Coctelería',
-          direccion: data.direccion || cached.direccion || '',
-          ciudad: data.ciudad || cached.ciudad || '',
-          telefono: data.telefono || cached.telefono || '',
-          email: data.email || cached.email || '',
-          aforo: data.aforo || cached.aforo || '',
-          logo_filename: data.logo_filename || cached.logo_filename || ''
-        };
-        setPerfil(perfilData);
-        setLogoPreview(data.logo_filename ? getPublicLogoUrl(data.logo_filename) : (cached.logoPreview || ''));
-      }
-      
-      const config = JSON.parse(localStorage.getItem('barops_config') || '{}');
-      setOperativo({
-        umbral_dias: config.umbral_dias || 3,
-        proveedor: config.proveedor || '',
-        telefono_proveedor: config.telefono_proveedor || ''
-      });
-      
-      const savedPrefs = JSON.parse(localStorage.getItem('barops_prefs') || '{}');
-      setPrefs(p => ({...p, ...savedPrefs}));
-      
-      setLoading(false);
-    } catch (err) {
-      console.warn('Error fetching local data (usando caché):', err.message);
-      setLoading(false);
-    }
-  };
-
-  const handleLogoUpload = async (file) => {
-    if (!file) {
-      setToast('Selecciona una imagen');
-      return;
-    }
-
-    if (!supabase) {
-      setToast('Supabase no conectado');
-      console.error('Supabase client not initialized');
-      return;
-    }
-
-    try {
-      // Read file as data URL for immediate preview
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setLogoPreview(e.target.result);
-      };
-      reader.readAsDataURL(file);
-
-      const ext = file.name.split('.').pop();
-      const filename = `${LOCAL_ID}-logo-${Date.now()}.${ext}`;
-
-      // Upload to storage with proper error handling
-      const { data, error } = await supabase.storage
-        .from('logos')
-        .upload(filename, file, { upsert: true });
-
-      if (error) {
-        console.error('Storage upload error:', error);
-        setToast(`Error: ${error.message}`);
-        return;
-      }
-
-      // Save filename to perfil state (will be saved to DB on handleSavePerfil)
-      setPerfil(p => ({...p, logo_filename: filename}));
-      setToast('Logo subido ✓');
-    } catch (err) {
-      console.error('Error uploading logo:', err);
-      setToast(`Error: ${err.message || 'Error al subir logo'}`);
-    }
-  };
-
-  const handleSavePerfil = async () => {
-    if (!perfil.nombre?.trim()) {
-      setToast('El nombre del local es obligatorio');
-      return;
-    }
-    setSaving(true);
-    try {
-      // 1. SIEMPRE guardar en localStorage primero
-      const perfilToSave = {
-        nombre: perfil.nombre, tipo: perfil.tipo, direccion: perfil.direccion,
-        ciudad: perfil.ciudad, telefono: perfil.telefono, email: perfil.email,
-        aforo: perfil.aforo, logo_filename: perfil.logo_filename || '',
-        logoPreview: logoPreview
-      };
-      localStorage.setItem('barops_perfil', JSON.stringify(perfilToSave));
-      localStorage.setItem('barops_local_nombre', perfil.nombre);
-      localStorage.setItem('barops_local_name', perfil.nombre);
-      localStorage.setItem('barops_config', JSON.stringify(operativo));
-      onLocalNameChange(perfil.nombre);
-
-      // 2. Guardar en Supabase con upsert (funciona aunque la fila no exista)
-      if (supabase) {
-        const updateData = {
-          id: LOCAL_ID,
-          nombre: perfil.nombre,
-          tipo: perfil.tipo,
-          direccion: perfil.direccion,
-          ciudad: perfil.ciudad,
-          telefono: perfil.telefono,
-          email: perfil.email,
-          aforo: parseInt(perfil.aforo) || null,
-          logo_filename: perfil.logo_filename || null
-        };
-
-        const { error } = await supabase
-          .from('locales')
-          .upsert(updateData, { onConflict: 'id' });
-
-        if (error) {
-          console.warn('Supabase warning (guardado local OK):', error.message);
-          setToast(`Guardado localmente ✓ (BD: ${error.message})`);
-          return;
-        }
-      }
-
-      setToast('Cambios guardados ✓');
-    } catch (err) {
-      console.error('Error saving perfil:', err);
-      setToast('Guardado localmente ✓ (sin conexión a BD)');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSavePrefs = async () => {
-    setSaving(true);
-    try {
-      localStorage.setItem('barops_prefs', JSON.stringify(prefs));
-      setToast('Preferencias guardadas ✓');
-    } catch (err) {
-      setToast('Error al guardar preferencias');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleExportInventario = async () => {
-    try {
-      if (!supabase) throw new Error('Supabase no conectado');
-      const { data, error } = await supabase.from('productos').select('*').eq('local_id', LOCAL_ID);
-      if (error) throw error;
-      if (!data || data.length === 0) { setToast('No hay productos para exportar'); return; }
-      
-      const headers = ['Nombre', 'Categoría', 'Stock Actual', 'Stock Mínimo', 'Unidad', 'Coste Unitario'];
-      const rows = data.map(p => [p.nombre, p.categoria || '', p.stock_actual || 0, p.stock_minimo || 0, p.unidad || '', p.coste_unitario || 0]);
-      const csv = generateCSV(headers, rows);
-      downloadCSV(csv, `barops-inventario-${formatDateISO()}.csv`);
-      setToast('Inventario exportado ✓');
-    } catch (err) {
-      console.error('Error exporting inventario:', err);
-      setToast('Error al exportar');
-    }
-  };
-
-  const handleExportMovimientos = async () => {
-    try {
-      if (!supabase) throw new Error('Supabase no conectado');
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - 90);
-      const { data, error } = await supabase.from('movimientos_stock')
-        .select('*').eq('local_id', LOCAL_ID).gte('fecha', formatDateISO(startDate));
-      if (error) throw error;
-      if (!data || data.length === 0) { setToast('Aún no hay movimientos registrados'); return; }
-      
-      const headers = ['Fecha', 'Producto ID', 'Tipo', 'Cantidad', 'Motivo'];
-      const rows = data.map(m => [m.fecha, m.producto_id, m.tipo, m.cantidad, m.motivo || '']);
-      const csv = generateCSV(headers, rows);
-      downloadCSV(csv, `barops-movimientos-${formatDateISO()}.csv`);
-      setToast('Movimientos exportados ✓');
-    } catch (err) {
-      console.error('Error exporting movimientos:', err);
-      setToast('Error al exportar');
-    }
-  };
-
-  const handleExportMerma = async () => {
-    try {
-      if (!supabase) throw new Error('Supabase no conectado');
-      const { data, error } = await supabase.from('inventario_fisico_items')
-        .select('*, inventarios_fisicos(fecha_conteo)').eq('inventarios_fisicos.local_id', LOCAL_ID);
-      if (error) throw error;
-      if (!data || data.length === 0) { setToast('Aún no hay inventarios físicos completados'); return; }
-      
-      const headers = ['Producto ID', 'Cantidad Teórica', 'Cantidad Real', 'Diferencia', 'Fecha Conteo'];
-      const rows = data.map(item => [
-        item.producto_id,
-        item.cantidad_teorica,
-        item.cantidad_real,
-        item.diferencia,
-        item.inventarios_fisicos?.fecha_conteo || ''
-      ]);
-      const csv = generateCSV(headers, rows);
-      downloadCSV(csv, `barops-merma-${formatDateISO()}.csv`);
-      setToast('Informe de merma exportado ✓');
-    } catch (err) {
-      console.error('Error exporting merma:', err);
-      setToast('Error al exportar');
-    }
-  };
-
-  const handleInviteUser = () => {
-    if (!inviteEmail.trim()) { setToast('Ingresa un email válido'); return; }
-    setToast(`Invitación enviada a ${inviteEmail}`);
-    setInviteEmail('');
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <>
-      <div onClick={onClose} style={{ position:'fixed', inset:0, background:'#00000066', zIndex:998, transition:'opacity 0.2s' }}/>
-      <div style={{ position:'fixed', right:0, top:0, bottom:0, width:'420px', background:C.card, borderLeft:`1px solid ${C.border}`, zIndex:999, display:'flex', flexDirection:'column', boxShadow:'-8px 0 24px rgba(0,0,0,0.3)' }}>
-        
-        {toast && <Toast msg={toast} onClose={()=>setToast(null)}/>}
-        
-        <div style={{ padding:'20px 24px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-          <h2 style={{ fontFamily:F, fontSize:'14px', fontWeight:700, letterSpacing:'2.5px', color:C.text, margin:0 }}>CONFIGURACIÓN</h2>
-          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', padding:0 }}>
-            <X size={18} color={C.textSec}/>
-          </button>
-        </div>
-
-        <div style={{ display:'flex', gap:0, borderBottom:`1px solid ${C.border}`, padding:'0 4px' }}>
-          {['perfil', 'equipo', 'datos'].map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{
-              flex:1, padding:'14px 12px', background:'none', border:'none', cursor:'pointer',
-              borderBottom:`2px solid ${tab === t ? C.orange : 'transparent'}`,
-              fontFamily:F, fontSize:'10px', color:tab === t ? C.orange : C.textSec, letterSpacing:'2px', fontWeight:tab === t ? 700 : 400,
-              transition:'all 0.2s', textTransform:'uppercase'
-            }}>
-              {t === 'perfil' ? 'PERFIL' : t === 'equipo' ? 'EQUIPO' : 'DATOS'}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ flex:1, overflowY:'auto', padding:'20px 24px' }}>
-          {loading ? (
-            <div style={{ textAlign:'center', color:C.teal }}>CARGANDO...</div>
-          ) : tab === 'perfil' ? (
-            <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
-              <div style={{ textAlign:'center' }}>
-                <div style={{ width:100, height:100, margin:'0 auto 12px', borderRadius:8, background:C.cardAlt, border:`2px dashed ${C.border2}`, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
-                  {logoPreview ? <img src={logoPreview} style={{ width:'100%', height:'100%', objectFit:'cover' }}/> : <Store size={40} color={C.textSec}/>}
-                </div>
-                <label style={{ display:'inline-block', padding:'8px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'10px', color:C.text, letterSpacing:'1px', fontWeight:700 }}>
-                  SUBIR LOGO
-                  <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && handleLogoUpload(e.target.files[0])} style={{ display:'none' }}/>
-                </label>
-              </div>
-              {['nombre', 'tipo', 'direccion', 'ciudad', 'telefono', 'email', 'aforo'].map(field => (
-                <div key={field}>
-                  <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>{field}</label>
-                  {field === 'tipo' ? (
-                    <select value={perfil[field]} onChange={(e) => setPerfil(p => ({...p, [field]:e.target.value}))} 
-                      style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text }}>
-                      {['Coctelería', 'Bar', 'Restaurante-Bar', 'Club', 'Otro'].map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                    </select>
-                  ) : (
-                    <input type={field === 'email' ? 'email' : field === 'aforo' ? 'number' : 'text'} value={perfil[field]} onChange={(e) => setPerfil(p => ({...p, [field]:e.target.value}))} style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}/>
-                  )}
-                </div>
-              ))}
-              <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14, marginTop:8 }}>
-                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.orange, letterSpacing:'2px', fontWeight:700, marginBottom:12 }}>CONFIGURACIÓN OPERATIVA</h3>
-                {['umbral_dias', 'proveedor', 'telefono_proveedor'].map(field => (
-                  <div key={field} style={{ marginBottom:10 }}>
-                    <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>{field === 'umbral_dias' ? 'Umbral Stock Crítico (días)' : field === 'proveedor' ? 'Proveedor Principal' : 'Teléfono Proveedor'}</label>
-                    <input type={field === 'umbral_dias' ? 'number' : 'text'} value={operativo[field]} onChange={(e) => setOperativo(p => ({...p, [field]:e.target.value}))} style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}/>
-                  </div>
-                ))}
-              </div>
-              <button onClick={handleSavePerfil} disabled={saving} style={{ width:'100%', padding:'12px', background:C.orange, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:'#000', fontWeight:700, letterSpacing:'2px', transition:'opacity 0.2s', opacity:saving ? 0.6 : 1 }}>GUARDAR CAMBIOS</button>
-            </div>
-          ) : tab === 'equipo' ? (
-            <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
-              <div>
-                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.teal, letterSpacing:'2px', fontWeight:700, marginBottom:12 }}>EQUIPO DE ACCESO</h3>
-                {users.map(u => (
-                  <div key={u.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px', background:C.cardAlt, borderRadius:4, marginBottom:8 }}>
-                    <div style={{ width:36, height:36, borderRadius:'50%', background:C.orange, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F, fontSize:'11px', fontWeight:700, color:'#000', flexShrink:0 }}>{u.avatar}</div>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontFamily:F, fontSize:'11px', color:C.text }}>{u.email}</div>
-                      <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec }}>{u.rol}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div>
-                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.purple, letterSpacing:'2px', fontWeight:700, marginBottom:10 }}>INVITAR USUARIO</h3>
-                <div style={{ display:'flex', gap:8 }}>
-                  <input type="email" placeholder="email@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} style={{ flex:1, padding:'10px 12px', fontFamily:F, fontSize:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}/>
-                  <button onClick={handleInviteUser} style={{ padding:'10px 14px', background:C.purple, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:'#fff', fontWeight:700 }}>ENVIAR</button>
-                </div>
-              </div>
-              <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14 }}>
-                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.amber, letterSpacing:'2px', fontWeight:700, marginBottom:14 }}>PREFERENCIAS</h3>
-                {[{key:'stock_alerts', label:'Alertas de stock crítico'}, {key:'shift_alerts', label:'Alertas de turnos'}, {key:'weekly_report', label:'Informe semanal'}, {key:'compact_mode', label:'Modo compacto'}].map(item => (
-                  <div key={item.key} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 0', borderBottom:`1px solid ${C.border2}` }}>
-                    <span style={{ fontFamily:F, fontSize:'11px', color:C.text }}>{item.label}</span>
-                    <button onClick={() => setPrefs(p => ({...p, [item.key]:!p[item.key]}))} style={{ width:44, height:24, borderRadius:12, background:prefs[item.key] ? C.orange : '#333', border:'none', cursor:'pointer', transition:'all 0.2s', position:'relative' }}>
-                      <div style={{ position:'absolute', width:20, height:20, borderRadius:'50%', background:'#fff', top:2, left:prefs[item.key] ? 22 : 2, transition:'left 0.2s' }}/>
-                    </button>
-                  </div>
-                ))}
-                <div style={{ marginTop:14 }}>
-                  <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>Día del Informe Semanal</label>
-                  <select value={prefs.weekly_day} onChange={(e) => setPrefs(p => ({...p, weekly_day:e.target.value}))} style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text }}>
-                    {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
-                </div>
-              </div>
-              <button onClick={handleSavePrefs} disabled={saving} style={{ width:'100%', padding:'12px', background:C.orange, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:'#000', fontWeight:700, letterSpacing:'2px', transition:'opacity 0.2s', opacity:saving ? 0.6 : 1, marginTop:12 }}>GUARDAR PREFERENCIAS</button>
-            </div>
-          ) : (
-            <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-              <button onClick={handleExportInventario} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s', hover:{background:C.orange} }}>📊 EXPORTAR INVENTARIO CSV</button>
-              <button onClick={handleExportMovimientos} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s' }}>📈 EXPORTAR MOVIMIENTOS CSV</button>
-              <button onClick={handleExportMerma} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s' }}>📉 EXPORTAR INFORME MERMA CSV</button>
-            </div>
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
-
-
 export default function BarOps() {
   const params = new URLSearchParams(window.location.search);
   const initialScreen = (params.get('payment') === 'success' || params.get('session_id')) ? 'success' : 'dashboard';
   const [screen, setScreen]       = useState(initialScreen);
   const [customIngs, setCustomIngs] = useState([]);
   const [customInv,  setCustomInv]  = useState([]);
-  const [localName, setLocalName] = useState(
-    localStorage.getItem('barops_local_nombre') ||
-    localStorage.getItem('barops_local_name') ||
-    'Mi Local'
-  );
-  const [showLocalDrawer, setShowLocalDrawer] = useState(false);
+  const [localName, setLocalName] = useState(localStorage.getItem('barops_local_name') || 'Paradiso Cocktail Bar');
 
   const [inventoryLoading, setInventoryLoading] = useState(true);
 
-  // Sincroniza el nombre del local desde Supabase (best-effort, localStorage manda)
   const fetchLocalName = async () => {
     try {
       if (!supabase) return;
-      const { data } = await supabase
+
+      // Asegurar que existe la fila del local — si no existe, la crea con el nombre guardado
+      const savedName = localStorage.getItem('barops_local_name') || 'Mi Local';
+      await supabase.from('locales').upsert(
+        { id: '00000000-0000-0000-0000-000000000001', nombre: savedName },
+        { onConflict: 'id', ignoreDuplicates: true }
+      );
+
+      const { data, error } = await supabase
         .from('locales')
         .select('nombre')
         .eq('id', '00000000-0000-0000-0000-000000000001')
-        .maybeSingle();
+        .single();
+
+      if (error) throw error;
       if (data?.nombre) {
         setLocalName(data.nombre);
-        localStorage.setItem('barops_local_nombre', data.nombre);
         localStorage.setItem('barops_local_name', data.nombre);
       }
     } catch (err) {
-      // localStorage ya tiene el valor correcto
+      console.error('Error fetching local name:', err);
+      // En caso de error, el localStorage ya tiene el valor correcto
     }
   };
 
@@ -3895,6 +2942,7 @@ export default function BarOps() {
     agente:     <AgenteIA/>,
     analytics:  <Analytics/>,
     carta:      <Carta/>,
+    local:      <Local localName={localName} onLocalNameChange={setLocalName}/>,
     pricing:    <Pricing/>,
     success:    <PaymentSuccess/>,
   };
@@ -3925,12 +2973,11 @@ export default function BarOps() {
             body { font-size: 14px; }
           }
         `}</style>
-        <Sidebar active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={()=>setShowLocalDrawer(true)}/>
+        <Sidebar active={screen} setActive={setScreen} localName={localName}/>
         <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', marginTop:isMobile?60:0 }}>
           {SCREENS[screen]}
         </div>
       </div>
-      <LocalDrawer isOpen={showLocalDrawer} onClose={()=>setShowLocalDrawer(false)} localName={localName} onLocalNameChange={setLocalName}/>
     </AppCtx.Provider>
   );
 }
