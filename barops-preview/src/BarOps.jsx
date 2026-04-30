@@ -2090,7 +2090,7 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
     tiempo_preparacion: cocktail?.tiempo_preparacion || '',
     fecha_inicio_temporada: cocktail?.fecha_inicio_temporada || '',
     fecha_fin_temporada: cocktail?.fecha_fin_temporada || '',
-    alergenos: cocktail?.alergenos ? JSON.parse(cocktail.alergenos) : [],
+    alergenos: cocktail?.alergenos ? (typeof cocktail.alergenos === 'string' ? JSON.parse(cocktail.alergenos) : cocktail.alergenos) : [],
   });
 
   const [formIngs, setFormIngs] = useState(cocktail?.coctel_ingredientes || []);
@@ -2512,10 +2512,13 @@ function Carta() {
   const [editingCocktail, setEditingCocktail] = useState(null);
   const [toast, setToast]               = useState(null);
   const [showForm, setShowForm]         = useState(false);
-  const [form, setForm]                 = useState({ name:'', tipo:'autor', description:'', price:'' });
+  const [form, setForm]                 = useState({ name:'', tipo:'autor', estado:'borrador', description:'', price:'', photoUrl: null });
+  const [photoFile, setPhotoFile]       = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
   const [formIngs, setFormIngs]         = useState([]);
   const [newIng, setNewIng]             = useState({ id:'', qty:'' });
   const [ingSearch, setIngSearch]       = useState('');
+  const fileInputRef = React.useRef(null);
 
   const fetchCocteles = async () => {
     if (!supabase) return;
@@ -2566,6 +2569,30 @@ function Carta() {
     }
   };
 
+  const handlePhotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setPhotoPreview(ev.target?.result);
+    reader.readAsDataURL(file);
+  };
+
+  const uploadPhoto = async (file) => {
+    if (!supabase || !file) return null;
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}.${fileExt}`;
+      const { data, error } = await supabase.storage.from('cocteles').upload(fileName, file);
+      if (error) throw error;
+      const { data: pubData } = supabase.storage.from('cocteles').getPublicUrl(fileName);
+      return pubData?.publicUrl;
+    } catch (err) {
+      console.error('Photo upload error:', err);
+      return null;
+    }
+  };
+
   const counts = {
     clasicos:   cocteles.filter(c => c.tipo==='clasico' && c.estado==='activo').length,
     autor:      cocteles.filter(c => c.tipo==='autor'   && c.estado==='activo').length,
@@ -2607,16 +2634,23 @@ function Carta() {
   };
 
   const resetForm = () => {
-    setForm({ name:'', tipo:'autor', description:'', price:'' });
+    setForm({ name:'', tipo:'autor', estado:'borrador', description:'', price:'', photoUrl: null });
     setFormIngs([]);
     setNewIng({ id:'', qty:'' });
     setIngSearch('');
+    setPhotoFile(null);
+    setPhotoPreview(null);
     setShowForm(false);
   };
 
   const saveForm = async () => {
     if (!form.name.trim()||!form.price||formIngs.length===0||!supabase) return;
     try {
+      let photoUrl = form.photoUrl;
+      if (photoFile) {
+        photoUrl = await uploadPhoto(photoFile);
+      }
+
       const ings = formIngs.map(fi=>{
         const db = allIngs.find(d=>d.id===fi.id);
         const qty = parseFloat(fi.qty);
@@ -2626,9 +2660,10 @@ function Carta() {
         local_id: LOCAL_ID,
         nombre: form.name.trim(),
         tipo: form.tipo,
-        estado: 'borrador',
+        estado: form.estado,
         descripcion: form.description.trim(),
         precio: parseFloat(form.price),
+        foto_url: photoUrl,
       }).select().single();
       if (cErr) throw cErr;
       const iData = ings.map(i=>({coctel_id:cData.id,...i}));
@@ -2819,11 +2854,16 @@ function Carta() {
                       </select>
                     </div>
                     <div>
-                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE *</div>
-                      <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
-                        placeholder="Ej: Paradiso Sour"
-                        style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                      />
+                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>ESTADO</div>
+                      <select value={form.estado} onChange={e=>setForm(f=>({...f,estado:e.target.value}))}
+                        style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none' }}
+                      >
+                        <option value="borrador">BORRADOR</option>
+                        <option value="activo">ACTIVO</option>
+                        <option value="revision">REVISIÓN</option>
+                        <option value="temporada">TEMPORADA</option>
+                        <option value="retirado">RETIRADO</option>
+                      </select>
                     </div>
                     <div>
                       <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>PRECIO DE VENTA (€) *</div>
@@ -2834,12 +2874,28 @@ function Carta() {
                     </div>
                   </div>
 
+                  <div style={{ marginBottom:14 }}>
+                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE *</div>
+                    <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
+                      placeholder="Ej: Paradiso Sour"
+                      style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                    />
+                  </div>
+
                   <div style={{ marginBottom:18 }}>
                     <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>DESCRIPCIÓN / NOTAS</div>
                     <input value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))}
                       placeholder="Ej: Versión de la casa con Patrón, zumo de lima y sirope de mango"
                       style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
                     />
+                  </div>
+
+                  <div style={{ marginBottom:18 }}>
+                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>FOTO DEL CÓCTEL</div>
+                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} style={{ display:'none' }}/>
+                    <Btn variant="outline" onClick={()=>fileInputRef.current?.click()} sx={{ width:'100%', padding:'9px 12px', fontSize:'11px', justifyContent:'center' }}>
+                      📷 SUBIR FOTO
+                    </Btn>
                   </div>
 
                   <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>INGREDIENTES *</div>
@@ -2903,6 +2959,11 @@ function Carta() {
 
                 {/* Right: live preview */}
                 <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                  {photoPreview && (
+                    <Card sx={{ padding:0, overflow:'hidden' }}>
+                      <img src={photoPreview} alt="Preview" style={{ width:'100%', height:'200px', objectFit:'cover' }}/>
+                    </Card>
+                  )}
                   <Card accent={mc} sx={{ padding:20, flex:1 }}>
                     <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:16 }}>PREVIEW EN TIEMPO REAL</div>
 
