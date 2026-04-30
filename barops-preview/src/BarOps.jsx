@@ -2114,7 +2114,7 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
       tiempo_preparacion: cocktail.tiempo_preparacion || '',
       fecha_inicio_temporada: cocktail.fecha_inicio_temporada || '',
       fecha_fin_temporada: cocktail.fecha_fin_temporada || '',
-      alergenos: cocktail.alergenos ? JSON.parse(cocktail.alergenos) : [],
+      alergenos: cocktail.alergenos ? (typeof cocktail.alergenos === 'string' ? JSON.parse(cocktail.alergenos) : cocktail.alergenos) : [],
       foto_url: cocktail.foto_url || null,
     });
     setFormIngs(cocktail.coctel_ingredientes || []);
