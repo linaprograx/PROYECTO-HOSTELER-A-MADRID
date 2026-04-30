@@ -9,7 +9,7 @@ import {
   AlertTriangle, CheckCircle, Clock, TrendingUp, TrendingDown,
   Send, HelpCircle, Plus, Bell, X, Zap,
   ShoppingCart, ChevronDown, ChevronUp, UserCheck,
-  BookOpen, Trash2, CreditCard, Store, Settings,
+  BookOpen, Trash2, CreditCard, Store, Settings, Wine,
 } from 'lucide-react';
 
 // ─── TOKENS ───────────────────────────────────────────────────────────────────
