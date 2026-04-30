@@ -2809,7 +2809,7 @@ function Carta() {
               <CocktailCard
                 key={c.id}
                 cocktail={c}
-                productos={productos}
+                productos={[]}
                 onUpdate={updateCoctel}
                 onDelete={deleteCoctel}
                 onEdit={()=>{ setEditingCocktail(c); setShowEditModal(true); }}

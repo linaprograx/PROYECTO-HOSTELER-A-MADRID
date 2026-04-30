@@ -1935,7 +1935,7 @@ function Analytics() {
 }
 
 
-function CocktailCard({ cocktail, productos={productos}, onUpdate, onDelete, onEdit }) {
+function CocktailCard({ cocktail, productos=[], onUpdate, onDelete, onEdit }) {
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -2065,7 +2065,7 @@ function CocktailCard({ cocktail, productos={productos}, onUpdate, onDelete, onE
 }
 
 // ─── EDIT COCKTAIL MODAL (Drawer FASE 2) ──────────────────────────────────────
-function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos={productos} }) {
+function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) {
   const { customIngs=[] } = useApp() || {};
   const allIngs = [...INGREDIENTS_DB, ...customIngs];
   const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
@@ -2654,7 +2654,7 @@ function Carta() {
       const ings = formIngs.map(fi=>{
         const db = allIngs.find(d=>d.id===fi.id);
         const qty = parseFloat(fi.qty);
-        return { nombre:db?.name||fi.id, producto_id:fi.id, cantidad:qty, unidad:db?.unit||'cl', coste_unitario:db?.cpu||0 };
+        return { name:db?.name||fi.id, producto_id:fi.id, cantidad:qty, unidad:db?.unit||'cl', coste_unitario:db?db.cpu:0 };
       });
       const { data: cData, error: cErr } = await supabase.from('cocteles').insert({
         local_id: LOCAL_ID,
@@ -2809,7 +2809,7 @@ function Carta() {
               <CocktailCard
                 key={c.id}
                 cocktail={c}
-                productos={productos}
+                productos={[]}
                 onUpdate={updateCoctel}
                 onDelete={deleteCoctel}
                 onEdit={()=>{ setEditingCocktail(c); setShowEditModal(true); }}
