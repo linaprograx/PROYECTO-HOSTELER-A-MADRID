@@ -2064,27 +2064,106 @@ function CocktailCard({ cocktail, productos=[], onUpdate, onDelete, onEdit }) {
   );
 }
 
-// ─── EDIT COCKTAIL MODAL ──────────────────────────────────────────────────────
-function EditCocktailModal({ cocktail, allIngs, onClose, onSave }) {
-  const [form, setForm] = useState({ name: cocktail.name, description: cocktail.description || '', price: cocktail.price });
-  const [formIngs, setFormIngs] = useState(cocktail.ingredients || []);
-  const [newIng, setNewIng] = useState({ id:'', qty:'' });
+// ─── EDIT COCKTAIL MODAL (Drawer FASE 2) ──────────────────────────────────────
+function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) {
+  const { customIngs=[] } = useApp() || {};
+  const allIngs = [...INGREDIENTS_DB, ...customIngs];
+  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
+
+  const [tab, setTab] = useState('identidad');
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(cocktail?.foto_url || null);
+  const [uploading, setUploading] = useState(false);
+  const [unsaved, setUnsaved] = useState(false);
+  const [showConfirmClose, setShowConfirmClose] = useState(false);
+
+  const [form, setForm] = useState({
+    nombre: cocktail?.nombre || '',
+    tipo: cocktail?.tipo || 'autor',
+    estado: cocktail?.estado || 'borrador',
+    precio: cocktail?.precio || '',
+    descripcion: cocktail?.descripcion || '',
+    historia_coctel: cocktail?.historia_coctel || '',
+    instrucciones_preparacion: cocktail?.instrucciones_preparacion || '',
+    cristaleria: cocktail?.cristaleria || 'copa',
+    guarnicion: cocktail?.guarnicion || '',
+    tiempo_preparacion: cocktail?.tiempo_preparacion || '',
+    fecha_inicio_temporada: cocktail?.fecha_inicio_temporada || '',
+    fecha_fin_temporada: cocktail?.fecha_fin_temporada || '',
+    alergenos: cocktail?.alergenos ? JSON.parse(cocktail.alergenos) : [],
+  });
+
+  const [formIngs, setFormIngs] = useState(cocktail?.coctel_ingredientes || []);
+  const [newIng, setNewIng] = useState({ id:'', qty:'', unit:'cl' });
   const [ingSearch, setIngSearch] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  const ALLERGENS = [
+    'Trazas de cacahuetes', 'Trazas de frutos secos', 'Lácteos', 'Gluten',
+    'Huevo', 'Pescado', 'Crustáceos', 'Moluscos',
+    'Apio', 'Mostaza', 'Semillas de sésamo', 'Dióxido de azufre', 'Altramuces', 'Trazas de soja'
+  ];
+
+  const CRISTALERIA_OPTIONS = ['copa', 'vaso', 'martini', 'margarita', 'collins', 'old-fashioned', 'coupe'];
+
+  const handleFormChange = (key, value) => {
+    setForm(f => ({...f, [key]: value}));
+    setUnsaved(true);
+  };
+
+  const handlePhotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoFile(file);
+    const url = URL.createObjectURL(file);
+    setPhotoPreview(url);
+    setUnsaved(true);
+  };
+
+  const uploadPhoto = async () => {
+    if (!photoFile || !supabase) return;
+    setUploading(true);
+    try {
+      const ext = photoFile.name.split('.').pop();
+      const filename = `${cocktail?.id || 'new'}_${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from('cocteles').upload(filename, photoFile);
+      if (error) throw error;
+      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+      const photoUrl = `${SUPABASE_URL}/storage/v1/object/public/cocteles/${filename}`;
+      handleFormChange('foto_url', photoUrl);
+      setPhotoFile(null);
+    } catch (err) {
+      console.error('Photo upload error:', err);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const liveCost = formIngs.reduce((sum, fi) => {
-    const db = allIngs.find(d => d.id === fi.id);
-    return sum + (db ? db.cpu * parseFloat(fi.qty || 0) : 0);
+    return sum + (fi.cantidad * fi.coste_unitario);
   }, 0);
-  const livePrice = parseFloat(form.price) || 0;
-  const liveMargin = livePrice > 0 ? (livePrice - liveCost) / livePrice * 100 : 0;
+  const livePrice = parseFloat(form.precio) || 0;
+  const liveMargin = livePrice > 0 ? ((livePrice - liveCost) / livePrice) * 100 : 0;
   const mc = marginColor(liveMargin);
+
   const filtered = ingSearch.trim() ? filterIngredients(ingSearch, allIngs) : [];
 
   const addIng = () => {
     if (!newIng.id || !newIng.qty || parseFloat(newIng.qty) <= 0) return;
-    setFormIngs(p => [...p, { uid: Date.now(), ...newIng }]);
-    setNewIng({ id:'', qty:'' });
+    const ingData = allIngs.find(i => i.id === newIng.id);
+    setFormIngs(p => [...p, {
+      id: Date.now(),
+      coctel_id: cocktail?.id,
+      producto_id: newIng.id,
+      nombre: ingData?.name || newIng.id,
+      cantidad: parseFloat(newIng.qty),
+      unidad: newIng.unit,
+      coste_unitario: ingData?.cpu || 0,
+      opcional: false,
+    }]);
+    setNewIng({ id:'', qty:'', unit:'cl' });
     setIngSearch('');
+    setUnsaved(true);
   };
 
   const selectIngredient = (ing) => {
@@ -2092,140 +2171,305 @@ function EditCocktailModal({ cocktail, allIngs, onClose, onSave }) {
     setIngSearch(ing.name);
   };
 
-  const handleSave = () => {
-    if (!form.name.trim() || !form.price || formIngs.length === 0) return;
-    const ingredients = formIngs.map(fi => {
-      const db = allIngs.find(d => d.id === fi.id);
-      const qty = parseFloat(fi.qty);
-      return { name: db?.name || fi.id, qty, unit: db?.unit || 'ml', cost: db ? db.cpu * qty : 0 };
-    });
-    onSave({
-      ...cocktail,
-      name: form.name.trim(),
-      description: form.description.trim(),
-      price: parseFloat(form.price),
-      cost: liveCost,
-      margin: liveMargin.toFixed(1),
-      ingredients
-    });
+  const detectClassicBase = () => {
+    const names = formIngs.map(f => f.nombre.toLowerCase());
+    const hasGin = names.some(n => n.includes('gin'));
+    const hasCampari = names.some(n => n.includes('campari'));
+    const hasVermouth = names.some(n => n.includes('vermouth') || n.includes('vermut'));
+    return hasGin && hasCampari && hasVermouth;
   };
 
+  const suggestedPairings = () => {
+    const suggestions = [];
+    const names = formIngs.map(f => f.nombre.toLowerCase()).join(' ');
+    if (names.includes('limón') || names.includes('lima')) suggestions.push('Otros cítricos: Naranja, Pomelo');
+    if (names.includes('amaro') || names.includes('campari')) suggestions.push('Otras amargas: Fernet Branca, Averna');
+    if (detectClassicBase()) suggestions.push('Base clásica detectada: Negroni');
+    return suggestions;
+  };
+
+  const handleClose = () => {
+    if (unsaved) {
+      setShowConfirmClose(true);
+    } else {
+      onClose();
+    }
+  };
+
+  const handleSave = async () => {
+    if (photoFile) await uploadPhoto();
+    if (!form.nombre.trim() || !form.precio || formIngs.length === 0) {
+      console.error('Validación fallida');
+      return;
+    }
+    onSave({
+      id: cocktail?.id,
+      local_id: LOCAL_ID,
+      ...form,
+      alergenos: JSON.stringify(form.alergenos),
+      coctel_ingredientes: formIngs,
+    });
+    setUnsaved(false);
+  };
+
+  if (!isOpen) return null;
+
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
-      <Card accent={C.orange} sx={{ padding:28, maxWidth:700, width:'90%', maxHeight:'90vh', overflowY:'auto' }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
-          <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>EDITAR RECETA</span>
-          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
-            <X size={18}/>
+    <>
+      <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:1999, onClick:handleClose }}/>
+      <div style={{ position:'fixed', right:0, top:0, bottom:0, width:580, background:C.card, zIndex:2000, overflowY:'auto', borderLeft:`1px solid ${C.border2}`, boxShadow:'-4px 0 12px rgba(0,0,0,0.4)' }}>
+        <div style={{ padding:'24px 24px', borderBottom:`1px solid ${C.border2}`, display:'flex', justifyContent:'space-between', alignItems:'center', position:'sticky', top:0, background:C.card, zIndex:10 }}>
+          <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>EDITAR CÓCTEL</span>
+          <button onClick={handleClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
+            <X size={20}/>
           </button>
         </div>
 
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 200px', gap:24 }}>
-          <div>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
-              <div>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE *</div>
-                <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}
-                  style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                />
+        <div style={{ display:'flex', gap:0, borderBottom:`1px solid ${C.border2}`, padding:'0 24px' }}>
+          {['identidad', 'receta', 'carta', 'alergenos'].map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{
+              flex:1, padding:'14px 0', fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700,
+              background:'none', border:'none', cursor:'pointer', color:tab===t?C.orange:C.textSec,
+              borderBottom:tab===t?`2px solid ${C.orange}`:'2px solid transparent', transition:'all 0.2s'
+            }}>
+              {t.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ padding:'24px 24px' }}>
+          {tab === 'identidad' && (
+            <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
+              <div style={{ display:'flex', gap:16 }}>
+                <div style={{ position:'relative', width:100, height:100, borderRadius:4, background:C.cardAlt, border:`1px dashed ${C.border2}`, overflow:'hidden' }}>
+                  {photoPreview ? (
+                    <img src={photoPreview} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+                  ) : (
+                    <div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec, fontSize:'28px' }}>🍹</div>
+                  )}
+                  <input type="file" accept="image/*" onChange={handlePhotoChange} style={{ position:'absolute', inset:0, opacity:0, cursor:'pointer' }}/>
+                </div>
+                <div style={{ flex:1, display:'flex', flexDirection:'column', gap:8 }}>
+                  <label style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>FOTO</label>
+                  <Btn variant="outline" onClick={() => document.querySelector('input[type=file]')?.click()} sx={{ fontSize:'11px', padding:'8px 12px' }}>
+                    {photoFile ? 'Cambiar' : 'Subir'} Foto
+                  </Btn>
+                  {uploading && <span style={{ fontSize:'10px', color:C.teal }}>Subiendo...</span>}
+                </div>
               </div>
-              <div>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>PRECIO (€) *</div>
-                <input value={form.price} onChange={e => setForm(f => ({...f, price: e.target.value}))}
-                  placeholder="12.00" type="number" step="0.5" min="0"
-                  style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                />
+
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                <div>
+                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>NOMBRE *</div>
+                  <input value={form.nombre} onChange={e => handleFormChange('nombre', e.target.value)}
+                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>PRECIO (€) *</div>
+                  <input type="number" step="0.5" min="0" value={form.precio} onChange={e => handleFormChange('precio', e.target.value)}
+                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                  />
+                </div>
               </div>
+
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                <div>
+                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>TIPO</div>
+                  <select value={form.tipo} onChange={e => handleFormChange('tipo', e.target.value)}
+                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                  >
+                    <option value="clasico">CLÁSICO</option>
+                    <option value="autor">DE AUTOR</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>ESTADO</div>
+                  <select value={form.estado} onChange={e => handleFormChange('estado', e.target.value)}
+                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                  >
+                    <option value="activo">ACTIVO</option>
+                    <option value="borrador">BORRADOR</option>
+                    <option value="revision">REVISIÓN</option>
+                    <option value="temporada">TEMPORADA</option>
+                    <option value="retirado">RETIRADO</option>
+                  </select>
+                </div>
+              </div>
+
+              {form.estado === 'temporada' && (
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                  <div>
+                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>DESDE</div>
+                    <input type="date" value={form.fecha_inicio_temporada} onChange={e => handleFormChange('fecha_inicio_temporada', e.target.value)}
+                      style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>HASTA</div>
+                    <input type="date" value={form.fecha_fin_temporada} onChange={e => handleFormChange('fecha_fin_temporada', e.target.value)}
+                      style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
+          )}
 
-            <div style={{ marginBottom:18 }}>
-              <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>DESCRIPCIÓN</div>
-              <input value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
-                style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
-              />
-            </div>
-
-            <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>INGREDIENTES *</div>
-
-            {formIngs.length > 0 && (
-              <div style={{ display:'flex', flexDirection:'column', gap:5, marginBottom:10 }}>
-                {formIngs.map(fi => {
-                  const db = allIngs.find(d => d.id === fi.id);
-                  const cost = db ? db.cpu * parseFloat(fi.qty) : 0;
-                  return (
-                    <div key={fi.uid} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:3 }}>
-                      <span style={{ flex:1, fontSize:'12px', color:C.text }}>{db?.name}</span>
-                      <span style={{ fontSize:'12px', color:C.textSec, minWidth:55 }}>{fi.qty} {db?.unit}</span>
-                      <span style={{ fontSize:'12px', color:C.teal, minWidth:52, textAlign:'right', fontWeight:700 }}>€{cost.toFixed(3)}</span>
-                      <button onClick={() => setFormIngs(p => p.filter(i => i.uid !== fi.uid))} style={{ background:'none',border:'none',cursor:'pointer',color:'#EF4444',padding:'0 2px',display:'flex' }}>
-                        <Trash2 size={13}/>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <div style={{ display:'flex', gap:8, alignItems:'flex-end', position:'relative' }}>
-              <div style={{ flex:1, position:'relative' }}>
-                <input
-                  value={ingSearch}
-                  onChange={e => { setIngSearch(e.target.value); setNewIng(p => ({...p, id:''})); }}
-                  placeholder="🔍 Busca ingrediente..."
-                  style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
-                />
-                {ingSearch.trim() && filtered.length > 0 && (
-                  <div style={{ position:'absolute', top:'100%', left:0, right:0, background:C.card, border:`1px solid ${C.border2}`, borderTop:'none', borderRadius:'0 0 3px 3px', maxHeight:200, overflowY:'auto', zIndex:10 }}>
-                    {filtered.slice(0, 8).map(ing => (
-                      <div key={ing.id} onClick={() => selectIngredient(ing)} style={{ padding:'8px 12px', cursor:'pointer', borderBottom:`1px solid ${C.border}`, background:newIng.id === ing.id?`${C.orange}22`:'transparent' }}>
-                        <div style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{ing.name}</div>
-                        <div style={{ fontSize:'10px', color:C.textSec }}>@{ing.cat} • {ing.unit}</div>
+          {tab === 'receta' && (
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:18 }}>
+              <div>
+                <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2px', marginBottom:12, fontWeight:700 }}>INGREDIENTES</div>
+                {formIngs.length > 0 && (
+                  <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:14 }}>
+                    {formIngs.map((fi, idx) => (
+                      <div key={idx} style={{ display:'flex', alignItems:'center', gap:8, padding:'10px', background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:3 }}>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ fontSize:'11px', color:C.text, fontWeight:700 }}>{fi.nombre}</div>
+                          <div style={{ fontSize:'9px', color:C.textSec }}>{fi.cantidad} {fi.unidad} • €{(fi.cantidad * fi.coste_unitario).toFixed(3)}</div>
+                        </div>
+                        <button onClick={() => { setFormIngs(p => p.filter((_, i) => i !== idx)); setUnsaved(true); }} style={{ background:'none', border:'none', cursor:'pointer', color:C.red, padding:0 }}>
+                          <Trash2 size={13}/>
+                        </button>
                       </div>
                     ))}
                   </div>
                 )}
-              </div>
-              <div style={{ width:76, flexShrink:0 }}>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CANT.</div>
-                <input value={newIng.qty} onChange={e => setNewIng(p => ({...p, qty: e.target.value}))}
-                  onKeyDown={e => e.key === 'Enter' && addIng()}
-                  placeholder="0.5" type="number" step="0.5" min="0"
-                  style={{ width:'100%', padding:'9px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none' }}
-                />
-              </div>
-              <Btn variant="outline" onClick={addIng} sx={{ padding:'9px 14px', flexShrink:0, alignSelf:'flex-end' }}>
-                <Plus size={13}/> ADD
-              </Btn>
-            </div>
-          </div>
 
-          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-            <Card accent={mc} sx={{ padding:20, flex:1 }}>
-              <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:16 }}>PREVIEW</div>
-              <div style={{ marginBottom:14 }}>
-                <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>COSTE</div>
-                <div style={{ fontSize:'28px', color:C.orange, fontWeight:700, lineHeight:1 }}>€{liveCost.toFixed(2)}</div>
-              </div>
-              <div style={{ marginBottom:14 }}>
-                <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>PRECIO</div>
-                <div style={{ fontSize:'28px', color:C.text, fontWeight:700, lineHeight:1 }}>€{livePrice.toFixed(2)}</div>
-              </div>
-              <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14 }}>
-                <div style={{ fontSize:'10px', color:C.textSec, marginBottom:6 }}>MARGEN</div>
-                <div style={{ fontSize:'36px', fontWeight:700, color:mc, lineHeight:1 }}>
-                  {livePrice > 0 ? `${liveMargin.toFixed(1)}%` : '—'}
+                <div style={{ position:'relative', marginBottom:12 }}>
+                  <input value={ingSearch} onChange={e => { setIngSearch(e.target.value); setNewIng(p => ({...p, id:''})); }}
+                    placeholder="🔍 Buscar..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                  />
+                  {ingSearch.trim() && filtered.length > 0 && (
+                    <div style={{ position:'absolute', top:'100%', left:0, right:0, background:C.card, border:`1px solid ${C.border2}`, borderTop:'none', borderRadius:'0 0 3px 3px', maxHeight:150, overflowY:'auto', zIndex:20 }}>
+                      {filtered.slice(0, 6).map(ing => (
+                        <div key={ing.id} onClick={() => selectIngredient(ing)} style={{ padding:'8px 12px', cursor:'pointer', borderBottom:`1px solid ${C.border}`, background:newIng.id===ing.id?`${C.orange}22`:'transparent', fontSize:'11px', color:C.text }}>
+                          {ing.name}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display:'flex', gap:8, marginBottom:12 }}>
+                  <input type="number" step="0.5" min="0" value={newIng.qty} onChange={e => setNewIng(p => ({...p, qty: e.target.value}))}
+                    placeholder="Cant." onKeyDown={e => e.key==='Enter' && addIng()}
+                    style={{ width:60, padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                  />
+                  <select value={newIng.unit} onChange={e => setNewIng(p => ({...p, unit: e.target.value}))}
+                    style={{ width:60, padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                  >
+                    <option>cl</option>
+                    <option>ml</option>
+                    <option>ud</option>
+                    <option>g</option>
+                  </select>
+                  <Btn onClick={addIng} sx={{ flex:1, padding:'8px', fontSize:'10px' }}>ADD</Btn>
                 </div>
               </div>
-            </Card>
-          </div>
+
+              <div>
+                <div style={{ fontSize:'10px', color:C.amber, letterSpacing:'2px', marginBottom:12, fontWeight:700 }}>SUGERENCIAS IA</div>
+                <Card sx={{ padding:14, marginBottom:12 }}>
+                  <div style={{ fontSize:'10px', color:C.teal, marginBottom:8, fontWeight:700 }}>Coste Total: €{liveCost.toFixed(2)}</div>
+                  <div style={{ fontSize:'10px', color:C.textSec, marginBottom:12 }}>Precio: €{livePrice.toFixed(2)} | Margen: <span style={{ color:mc, fontWeight:700 }}>{liveMargin.toFixed(1)}%</span></div>
+                  {detectClassicBase() && <div style={{ fontSize:'10px', color:C.orange, marginBottom:8 }}>✓ Base clásica detectada (Gin + Campari + Vermouth)</div>}
+                  {suggestedPairings().map((s, i) => (
+                    <div key={i} style={{ fontSize:'10px', color:C.teal, marginBottom:6 }}>→ {s}</div>
+                  ))}
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {tab === 'carta' && (
+            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              <div>
+                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>DESCRIPCIÓN</div>
+                <input value={form.descripcion} onChange={e => handleFormChange('descripcion', e.target.value)}
+                  placeholder="Breve descripción para la carta..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:60 }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>HISTORIA</div>
+                <textarea value={form.historia_coctel} onChange={e => handleFormChange('historia_coctel', e.target.value)}
+                  placeholder="Origen y tradición del cóctel..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:80, resize:'vertical' }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>INSTRUCCIONES</div>
+                <textarea value={form.instrucciones_preparacion} onChange={e => handleFormChange('instrucciones_preparacion', e.target.value)}
+                  placeholder="Modo de preparación paso a paso..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:80, resize:'vertical' }}
+                />
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                <div>
+                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>CRISTALERÍA</div>
+                  <select value={form.cristaleria} onChange={e => handleFormChange('cristaleria', e.target.value)}
+                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                  >
+                    {CRISTALERIA_OPTIONS.map(opt => (
+                      <option key={opt} value={opt}>{opt.toUpperCase()}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>TIEMPO (min)</div>
+                  <input type="number" min="0" value={form.tiempo_preparacion} onChange={e => handleFormChange('tiempo_preparacion', e.target.value)}
+                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                  />
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>GUARNICIÓN</div>
+                <input value={form.guarnicion} onChange={e => handleFormChange('guarnicion', e.target.value)}
+                  placeholder="p.ej: Twist de naranja, aceituna..." style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                />
+              </div>
+            </div>
+          )}
+
+          {tab === 'alergenos' && (
+            <div>
+              <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'2px', marginBottom:16, fontWeight:700 }}>MARCAR LOS QUE APLIQUEN</div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                {ALLERGENS.map(allg => (
+                  <button key={allg} onClick={() => {
+                    handleFormChange('alergenos', form.alergenos.includes(allg) ? form.alergenos.filter(a => a!==allg) : [...form.alergenos, allg]);
+                  }} style={{
+                    padding:'12px', borderRadius:3, fontFamily:F, fontSize:'10px', border:`1px solid ${form.alergenos.includes(allg)?C.orange:C.border2}`,
+                    background:form.alergenos.includes(allg)?`${C.orange}22`:C.cardAlt, color:form.alergenos.includes(allg)?C.orange:C.textSec,
+                    cursor:'pointer', transition:'all 0.2s'
+                  }}>
+                    {form.alergenos.includes(allg) ? '✓' : '○'} {allg}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        <div style={{ display:'flex', gap:10, marginTop:24 }}>
-          <Btn variant="outline" onClick={onClose} sx={{ flex:1, padding:'10px' }}>CANCELAR</Btn>
-          <Btn onClick={handleSave} sx={{ flex:1, padding:'10px' }}>GUARDAR CAMBIOS</Btn>
+        <div style={{ padding:'24px 24px', borderTop:`1px solid ${C.border2}`, display:'flex', gap:12, position:'sticky', bottom:0, background:C.card }}>
+          <Btn variant="outline" onClick={handleClose} sx={{ flex:1, padding:'12px' }}>CANCELAR</Btn>
+          <Btn onClick={handleSave} sx={{ flex:1, padding:'12px' }}>GUARDAR</Btn>
         </div>
-      </Card>
-    </div>
+      </div>
+
+      {showConfirmClose && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2001 }}>
+          <Card sx={{ padding:28, maxWidth:380 }}>
+            <div style={{ marginBottom:20 }}>
+              <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'2px', fontWeight:700 }}>¿DESCARTAR CAMBIOS?</span>
+            </div>
+            <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, marginBottom:24 }}>Los cambios sin guardar se perderán.</p>
+            <div style={{ display:'flex', gap:10 }}>
+              <Btn variant="outline" onClick={() => setShowConfirmClose(false)} sx={{ flex:1, padding:'10px' }}>SEGUIR EDITANDO</Btn>
+              <Btn onClick={() => { setShowConfirmClose(false); setUnsaved(false); onClose(); }} sx={{ flex:1, padding:'10px' }}>DESCARTAR</Btn>
+            </div>
+          </Card>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -2426,16 +2670,42 @@ function Carta() {
         />
       )}
 
-      {showEditModal && editingCocktail && (
+      {editingCocktail && (
         <EditCocktailModal
           cocktail={editingCocktail}
-          allIngs={allIngs}
+          isOpen={showEditModal}
+          productos={productos}
           onClose={() => { setShowEditModal(false); setEditingCocktail(null); }}
-          onSave={(updated) => {
-            setCustoms(prev => prev.map(c => c.id === updated.id ? updated : c));
-            setToast(`"${updated.name}" actualizado`);
-            setShowEditModal(false);
-            setEditingCocktail(null);
+          onSave={async (updated) => {
+            if (!supabase) return;
+            try {
+              const { coctel_ingredientes, ...coctelData } = updated;
+              const { error: cErr } = await supabase.from('cocteles').update(coctelData).eq('id', updated.id);
+              if (cErr) throw cErr;
+
+              if (coctel_ingredientes && coctel_ingredientes.length > 0) {
+                const { error: delErr } = await supabase.from('coctel_ingredientes').delete().eq('coctel_id', updated.id);
+                if (delErr) throw delErr;
+                const ingsData = coctel_ingredientes.map(i => ({
+                  coctel_id: updated.id,
+                  producto_id: i.producto_id,
+                  nombre: i.nombre,
+                  cantidad: i.cantidad,
+                  unidad: i.unidad,
+                  coste_unitario: i.coste_unitario,
+                  opcional: i.opcional || false,
+                }));
+                const { error: insErr } = await supabase.from('coctel_ingredientes').insert(ingsData);
+                if (insErr) throw insErr;
+              }
+              await fetchCocteles();
+              setToast(`"${updated.nombre}" actualizado`);
+              setShowEditModal(false);
+              setEditingCocktail(null);
+            } catch (err) {
+              setToast('Error al actualizar cóctel');
+              console.error(err);
+            }
           }}
         />
       )}
