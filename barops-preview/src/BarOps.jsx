@@ -56,12 +56,13 @@ const parseCocktailsCSV = (raw) => {
 
   const mapping = {
     nombre: ['nombre','name','titulo','cocktail','coctel','product','producto'],
+    tipo: ['tipo','type','categoria','category'],
     descripcion: ['descripcion','description','notas','notes','ingredientes','ingredients','receta'],
     precio: ['precio','price','venta','sale_price','pvp','cost','coste'],
   };
 
   const getCol = (k) => headers.findIndex(h => mapping[k].includes(h));
-  const colNombre = getCol('nombre'), colDesc = getCol('descripcion'), colPrecio = getCol('precio');
+  const colNombre = getCol('nombre'), colTipo = getCol('tipo'), colDesc = getCol('descripcion'), colPrecio = getCol('precio');
 
   if (colNombre < 0 || colPrecio < 0) {
     return { ok:false, items:[], errors:['Faltan columnas: nombre y precio son obligatorias'] };
@@ -71,6 +72,8 @@ const parseCocktailsCSV = (raw) => {
   for (let i = 1; i < lines.length; i++) {
     const cells = lines[i].split(sep).map(c=>c.trim());
     const nombre = cells[colNombre]?.trim();
+    const tipoRaw = colTipo >= 0 ? cells[colTipo]?.trim().toLowerCase() || '' : '';
+    const tipo = ['clasico','clasicos','classic'].includes(tipoRaw) ? 'clasico' : 'autor';
     const descripcion = colDesc >= 0 ? cells[colDesc]?.trim() || '' : '';
     const precioStr = cells[colPrecio]?.trim().replace('€','').replace(',','.') || '';
     const precio = parseFloat(precioStr);
@@ -81,6 +84,7 @@ const parseCocktailsCSV = (raw) => {
     items.push({
       id: `custom_cocktail_${Date.now()}_${i}`,
       name: nombre,
+      tipo: tipo,
       description: descripcion,
       price: precio,
       cost: 0,
@@ -864,7 +868,6 @@ function ImportCocktailsModal({ onClose, onSave }) {
   const [parsed, setParsed] = useState([]);
   const [parseErrors, setParseErrors] = useState([]);
   const [parseErr, setParseErr] = useState('');
-  const [cocktailType, setCocktailType] = useState('autor');
   const fileRef = useRef(null);
 
   const handleFile = (e) => {
@@ -896,8 +899,12 @@ function ImportCocktailsModal({ onClose, onSave }) {
     setParsed(p => p.filter((_, i) => i !== idx));
   };
 
+  const changeTipo = (idx, tipo) => {
+    setParsed(p => p.map((c, i) => i === idx ? {...c, tipo} : c));
+  };
+
   const downloadTemplate = () => {
-    const tpl = `nombre,descripcion,precio\nMargarita Clásica,Patrón · Cointreau · Lima,12.00\nMojito Premium,Ron Diplomático · Menta · Lima,10.50\nNegroni Paradiso,Gin · Campari · Martini,13.00`;
+    const tpl = `nombre,tipo,precio,descripcion\nMargarita Clásica,clasico,12.00,Patrón · Cointreau · Lima\nMojito Premium,autor,10.50,Ron Diplomático · Menta · Lima\nNegroni Paradiso,clasico,13.00,Gin · Campari · Martini`;
     const blob = new Blob([tpl], { type:'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -908,7 +915,7 @@ function ImportCocktailsModal({ onClose, onSave }) {
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
-      <Card accent={C.orange} sx={{ padding:28, maxWidth:600, width:'90%', maxHeight:'90vh', overflowY:'auto' }}>
+      <Card accent={C.orange} sx={{ padding:28, maxWidth:700, width:'90%', maxHeight:'90vh', overflowY:'auto' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
           <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>IMPORTAR CÓCTELES</span>
           <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
@@ -922,7 +929,7 @@ function ImportCocktailsModal({ onClose, onSave }) {
             <textarea
               value={raw}
               onChange={e => setRaw(e.target.value)}
-              placeholder="Pega tu CSV aquí (nombre,descripcion,precio)..."
+              placeholder="Pega tu CSV aquí (nombre,tipo,precio,descripcion)..."
               style={{ width:'100%', height:150, padding:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box', marginBottom:12, resize:'vertical' }}
             />
             <input ref={fileRef} type="file" accept=".csv" onChange={handleFile} style={{ display:'none' }}/>
@@ -943,49 +950,43 @@ function ImportCocktailsModal({ onClose, onSave }) {
 
         {step === 2 && (
           <div>
-            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:12 }}>PASO 2: PREVIEW ({parsed.length} cócteles)</div>
-
-            <div style={{ marginBottom:14 }}>
-              <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>TIPO DE CÓCTEL</div>
-              <div style={{ display:'flex', gap:10 }}>
-                {[['clasicos', '🍹 CLÁSICOS'], ['autor', '⭐ DE AUTOR']].map(([val, label]) => (
-                  <button
-                    key={val}
-                    onClick={() => setCocktailType(val)}
-                    style={{
-                      flex:1, padding:'10px 12px', background:cocktailType===val?C.orange+'22':C.cardAlt,
-                      border:`1px solid ${cocktailType===val?C.orange:C.border2}`, borderRadius:3,
-                      fontFamily:F, fontSize:'11px', color:cocktailType===val?C.orange:C.textSec, cursor:'pointer', fontWeight:700, letterSpacing:'1px',
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:12 }}>PASO 2: REVISAR ({parsed.length} cócteles — importarán como BORRADORES)</div>
 
             {parseErrors.length > 0 && (
               <div style={{ padding:'10px', background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:3, fontSize:'10px', color:C.amber, marginBottom:12 }}>
                 ⚠ {parseErrors.length} filas con errores (serán ignoradas)
               </div>
             )}
-            <div style={{ maxHeight:300, overflowY:'auto', marginBottom:14 }}>
+            <div style={{ maxHeight:350, overflowY:'auto', marginBottom:14 }}>
               {parsed.map((c, i) => (
-                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, marginBottom:8 }}>
-                  <div>
+                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, marginBottom:8, gap:12 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{c.name}</div>
                     {c.description && <div style={{ fontSize:'10px', color:C.textSec, marginTop:2 }}>{c.description.substring(0,50)}</div>}
                     <div style={{ fontSize:'11px', color:C.orange, fontWeight:700, marginTop:3 }}>€{c.price.toFixed(2)}</div>
                   </div>
-                  <button onClick={() => removeItem(i)} style={{ background:'none', border:'none', cursor:'pointer', color:'#EF4444', display:'flex' }}>
-                    <Trash2 size={14}/>
-                  </button>
+                  <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                    <select
+                      value={c.tipo}
+                      onChange={(e) => changeTipo(i, e.target.value)}
+                      style={{
+                        padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3,
+                        fontFamily:F, fontSize:'11px', color:C.textSec, cursor:'pointer', minWidth:120,
+                      }}
+                    >
+                      <option value="clasico">CLÁSICO</option>
+                      <option value="autor">DE AUTOR</option>
+                    </select>
+                    <button onClick={() => removeItem(i)} style={{ background:'none', border:'none', cursor:'pointer', color:'#EF4444', display:'flex', flexShrink:0 }}>
+                      <Trash2 size={14}/>
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
             <div style={{ display:'flex', gap:10 }}>
               <Btn variant="outline" onClick={() => setStep(1)} sx={{ flex:1, padding:'11px', fontSize:'11px' }}>← ATRÁS</Btn>
-              <Btn onClick={() => { onSave(parsed, cocktailType); onClose(); }} sx={{ flex:1, padding:'11px', fontSize:'11px' }}>✓ IMPORTAR</Btn>
+              <Btn onClick={() => { onSave(parsed); onClose(); }} sx={{ flex:1, padding:'11px', fontSize:'11px' }}>✓ IMPORTAR {parsed.length}</Btn>
             </div>
           </div>
         )}
@@ -1934,67 +1935,131 @@ function Analytics() {
 }
 
 
-function CocktailCard({ cocktail, readonly, onDelete, onEdit }) {
+function CocktailCard({ cocktail, productos=[], onUpdate, onDelete, onEdit }) {
   const [open, setOpen] = useState(false);
-  const mc = marginColor(cocktail.margin);
-  const ings = cocktail.ings || cocktail.ingredients || [];
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const ings = cocktail.coctel_ingredientes || [];
+  const cost = ings.reduce((sum, ing) => sum + (ing.cantidad * ing.coste_unitario), 0);
+  const margin = cocktail.precio > 0 ? ((cocktail.precio - cost) / cocktail.precio) * 100 : 0;
+  const mc = marginColor(margin);
+
+  const stockStatus = ings.reduce(({ sinStock, enRiesgo }, ing) => {
+    const prod = productos.find(p => p.id === ing.producto_id);
+    if (!prod) return { sinStock, enRiesgo };
+    if (prod.stock_actual === 0) return { sinStock: sinStock + 1, enRiesgo };
+    if (prod.stock_actual <= prod.stock_minimo) return { sinStock, enRiesgo: enRiesgo + 1 };
+    return { sinStock, enRiesgo };
+  }, { sinStock: 0, enRiesgo: 0 });
+
+  const ESTADO_COLOR = { activo:C.teal, borrador:'#555555', revision:C.amber, temporada:C.purple, retirado:C.red };
+  const ESTADO_LABEL = { activo:'ACTIVO', borrador:'BORRADOR', revision:'REVISIÓN', temporada:'TEMPORADA', retirado:'RETIRADO' };
+
+  const menuOptions = [
+    cocktail.tipo !== 'clasico' ? { label:'Mover a Clásico', action:()=>{ onUpdate(cocktail.id, { tipo:'clasico' }); setMenuOpen(false); } } : null,
+    cocktail.tipo !== 'autor' ? { label:'Mover a De Autor', action:()=>{ onUpdate(cocktail.id, { tipo:'autor' }); setMenuOpen(false); } } : null,
+    cocktail.estado !== 'revision' ? { label:'Enviar a Revisión', action:()=>{ onUpdate(cocktail.id, { estado:'revision' }); setMenuOpen(false); } } : null,
+    cocktail.estado !== 'activo' ? { label:'Activar', action:()=>{ onUpdate(cocktail.id, { estado:'activo' }); setMenuOpen(false); } } : null,
+    cocktail.estado !== 'temporada' ? { label:'Mover a Temporada', action:()=>{ onUpdate(cocktail.id, { estado:'temporada' }); setMenuOpen(false); } } : null,
+    cocktail.estado !== 'retirado' ? { label:'Retirar', action:()=>{ onUpdate(cocktail.id, { estado:'retirado' }); setMenuOpen(false); } } : null,
+    { label:'Eliminar', action:()=>{ if(window.confirm('¿Eliminar cóctel?')) { onDelete(cocktail.id); setMenuOpen(false); } }, color:C.red },
+  ].filter(Boolean);
+
   return (
     <Card sx={{ overflow:'hidden', display:'flex', flexDirection:'column' }}>
-      <div style={{ padding:'16px 16px 12px' }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
-          <div style={{ fontSize:'14px', color:C.text, fontWeight:700, lineHeight:'1.3' }}>{cocktail.name}</div>
-          <div style={{ display:'flex', gap:6, alignItems:'center', flexShrink:0, marginLeft:8 }}>
-            {readonly
-              ? <span style={{ fontFamily:F, fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', padding:'2px 6px', border:`1px solid ${C.border2}`, borderRadius:2 }}>CLÁSICO</span>
-              : <>
-                  {onEdit && <button onClick={onEdit} style={{ background:'none', border:'none', cursor:'pointer', color:C.orange, padding:2, display:'flex', fontSize:'12px' }}>✎</button>}
-                  {onDelete && <button onClick={onDelete} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec, padding:2, display:'flex' }}><Trash2 size={13}/></button>}
-                </>
-            }
+      <div style={{ padding:'12px 16px', position:'relative' }}>
+        <div style={{ display:'flex', gap:12, marginBottom:8 }}>
+          {cocktail.foto_url ? (
+            <img src={cocktail.foto_url} style={{ width:80, height:80, borderRadius:4, objectFit:'cover' }} alt={cocktail.nombre} />
+          ) : (
+            <div style={{ width:80, height:80, background:C.border, borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <Wine size={32} color={C.textSec} />
+            </div>
+          )}
+          <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'space-between' }}>
+            <div>
+              <div style={{ fontSize:'13px', color:C.text, fontWeight:700, marginBottom:3 }}>{cocktail.nombre}</div>
+              {cocktail.descripcion && <div style={{ fontSize:'10px', color:C.textSec, lineHeight:'1.3' }}>{cocktail.descripcion}</div>}
+            </div>
+            <div style={{ display:'flex', gap:8 }}>
+              <span style={{ fontSize:'8px', color:'#000', background:ESTADO_COLOR[cocktail.estado], padding:'2px 8px', borderRadius:2, fontWeight:700, letterSpacing:'1px' }}>
+                {ESTADO_LABEL[cocktail.estado]}
+              </span>
+              <span style={{
+                fontSize:'8px', padding:'2px 8px', borderRadius:2, fontWeight:700, letterSpacing:'1px',
+                border:`1px solid ${cocktail.tipo === 'clasico' ? C.orange : 'transparent'}`,
+                background:cocktail.tipo === 'autor' ? C.orange : 'transparent',
+                color:cocktail.tipo === 'autor' ? '#000' : C.orange,
+              }}>
+                {cocktail.tipo === 'clasico' ? 'CLÁSICO' : 'DE AUTOR'}
+              </span>
+            </div>
           </div>
         </div>
-        {cocktail.description && (
-          <div style={{ fontSize:'11px', color:C.textSec, lineHeight:'1.4' }}>{cocktail.description}</div>
-        )}
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', padding:'12px 16px', gap:4, borderTop:`1px solid ${C.border}`, borderBottom:`1px solid ${C.border}` }}>
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', padding:'10px 16px', gap:4, borderTop:`1px solid ${C.border}`, borderBottom:`1px solid ${C.border}`, fontSize:'9px' }}>
         <div>
-          <div style={{ fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', marginBottom:3 }}>COSTE</div>
-          <div style={{ fontSize:'16px', color:C.orange, fontWeight:700 }}>€{Number(cocktail.cost).toFixed(2)}</div>
+          <div style={{ color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>COSTE</div>
+          <div style={{ fontSize:'14px', color:C.orange, fontWeight:700 }}>€{cost.toFixed(2)}</div>
         </div>
         <div>
-          <div style={{ fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', marginBottom:3 }}>PRECIO</div>
-          <div style={{ fontSize:'16px', color:C.text, fontWeight:700 }}>€{Number(cocktail.price).toFixed(2)}</div>
+          <div style={{ color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>PRECIO</div>
+          <div style={{ fontSize:'14px', color:C.text, fontWeight:700 }}>€{cocktail.precio.toFixed(2)}</div>
         </div>
         <div>
-          <div style={{ fontSize:'8px', color:C.textSec, letterSpacing:'1.5px', marginBottom:3 }}>MARGEN</div>
-          <div style={{ fontSize:'16px', color:mc, fontWeight:700 }}>{cocktail.margin}%</div>
+          <div style={{ color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>MARGEN</div>
+          <div style={{ fontSize:'14px', color:mc, fontWeight:700 }}>{margin.toFixed(1)}%</div>
         </div>
       </div>
+
+      <div style={{ padding:'8px 16px', borderBottom:`1px solid ${C.border}`, fontSize:'10px', color:stockStatus.sinStock>0?C.red:stockStatus.enRiesgo>0?C.amber:C.teal, fontWeight:700 }}>
+        {stockStatus.sinStock > 0 ? `✕ ${stockStatus.sinStock} sin stock` : stockStatus.enRiesgo > 0 ? `⚠ ${stockStatus.enRiesgo} en riesgo` : '● Todo en stock'}
+      </div>
+
       <button onClick={()=>setOpen(p=>!p)} style={{
         display:'flex', alignItems:'center', justifyContent:'space-between',
         padding:'8px 16px', background:C.cardAlt, border:'none', cursor:'pointer',
         fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1px',
-        borderTop:`1px solid ${C.border}`,
       }}>
         VER RECETA {open?<ChevronUp size={11}/>:<ChevronDown size={11}/>}
       </button>
+
       {open && (
-        <div style={{ padding:'10px 16px 14px' }}>
-          {ings.map((ing,i)=>(
-            <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'5px 0', borderBottom:`1px solid ${C.border}`, fontSize:'11px' }}>
-              <span style={{ color:C.textSec }}>{ing.n || `${ing.name} — ${ing.qty} ${ing.unit}`}</span>
-              {ing.cost!=null && <span style={{ color:C.teal }}>€{Number(ing.cost).toFixed(3)}</span>}
+        <div style={{ padding:'10px 16px' }}>
+          {ings.map(ing=>(
+            <div key={ing.id} style={{ display:'flex', justifyContent:'space-between', padding:'4px 0', fontSize:'10px', borderBottom:`1px solid ${C.border}` }}>
+              <span style={{ color:C.textSec }}>{ing.nombre} — {ing.cantidad} {ing.unidad}</span>
+              <span style={{ color:C.teal, fontWeight:700 }}>€{(ing.cantidad*ing.coste_unitario).toFixed(3)}</span>
             </div>
           ))}
-          {!readonly && (
-            <div style={{ display:'flex', justifyContent:'space-between', padding:'7px 0 0', fontSize:'11px', fontWeight:700 }}>
-              <span style={{ color:C.textSec }}>BENEFICIO POR COPA</span>
-              <span style={{ color:mc }}>€{(Number(cocktail.price)-Number(cocktail.cost)).toFixed(2)}</span>
-            </div>
-          )}
+          <div style={{ display:'flex', justifyContent:'space-between', padding:'6px 0 0', fontSize:'11px', fontWeight:700, borderTop:`1px solid ${C.border}`, marginTop:4, paddingTop:6 }}>
+            <span style={{ color:C.textSec }}>BENEFICIO POR COPA</span>
+            <span style={{ color:mc }}>€{(cocktail.precio-cost).toFixed(2)}</span>
+          </div>
         </div>
       )}
+
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 16px', borderTop:`1px solid ${C.border}` }}>
+        <button onClick={()=>setOpen(false)} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec, padding:0, display:'flex' }}>
+          <ChevronUp size={14} />
+        </button>
+        <div style={{ display:'flex', gap:8 }}>
+          {onEdit && <button onClick={onEdit} style={{ background:'none', border:'none', cursor:'pointer', color:C.orange, padding:'4px 8px' }}>✎ EDITAR</button>}
+          <div style={{ position:'relative' }}>
+            <button onClick={()=>setMenuOpen(p=>!p)} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec, padding:'4px 4px', fontSize:'14px' }}>···</button>
+            {menuOpen && (
+              <div style={{ position:'absolute', bottom:'100%', right:0, background:C.card, border:`1px solid ${C.border2}`, borderRadius:4, minWidth:180, zIndex:100, marginBottom:4 }}>
+                {menuOptions.map((opt,i)=>(
+                  <button key={i} onClick={opt.action} style={{ display:'block', width:'100%', padding:'10px 14px', textAlign:'left', background:'none', border:'none', borderBottom:i<menuOptions.length-1?`1px solid ${C.border}`:'none', cursor:'pointer', fontFamily:F, fontSize:'11px', color:opt.color||C.text, transition:'background 0.1s' }} onMouseEnter={e=>e.target.style.background=C.cardAlt} onMouseLeave={e=>e.target.style.background='none'}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </Card>
   );
 }
@@ -2168,29 +2233,90 @@ function EditCocktailModal({ cocktail, allIngs, onClose, onSave }) {
 function Carta() {
   const { customIngs = [] } = useApp() || {};
   const allIngs = [...INGREDIENTS_DB, ...customIngs];
+  const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
 
   const [tab, setTab]                   = useState('clasicos');
-  const [showForm, setShowForm]         = useState(false);
-  const [customs, setCustoms]           = useState(() => {
-    try { return JSON.parse(localStorage.getItem('barops_custom_cocktails')) || []; }
-    catch { return []; }
-  });
-  const [form, setForm]                 = useState({ name:'', description:'', price:'' });
-  const [formIngs, setFormIngs]         = useState([]);
-  const [newIng, setNewIng]             = useState({ id:'', qty:'' });
-  const [toast, setToast]               = useState(null);
-  const [ingSearch, setIngSearch]       = useState('');
+  const [cocteles, setCocteles]         = useState([]);
+  const [loading, setLoading]           = useState(false);
   const [showImportCocteles, setShowImportCocteles] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingCocktail, setEditingCocktail] = useState(null);
+  const [toast, setToast]               = useState(null);
+  const [showForm, setShowForm]         = useState(false);
+  const [form, setForm]                 = useState({ name:'', tipo:'autor', description:'', price:'' });
+  const [formIngs, setFormIngs]         = useState([]);
+  const [newIng, setNewIng]             = useState({ id:'', qty:'' });
+  const [ingSearch, setIngSearch]       = useState('');
+
+  const fetchCocteles = async () => {
+    if (!supabase) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('cocteles')
+        .select('*, coctel_ingredientes(*)')
+        .eq('local_id', LOCAL_ID)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setCocteles(data || []);
+    } catch (err) {
+      setToast('Error al cargar cócteles');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    localStorage.setItem('barops_custom_cocktails', JSON.stringify(customs));
-  }, [customs]);
+    fetchCocteles();
+  }, []);
 
-  // Group ingredients for select with fuzzy search
+  const updateCoctel = async (id, changes) => {
+    if (!supabase) return;
+    try {
+      const { error } = await supabase.from('cocteles').update(changes).eq('id', id);
+      if (error) throw error;
+      setCocteles(prev => prev.map(c => c.id === id ? {...c, ...changes} : c));
+      setToast('Cóctel actualizado');
+    } catch (err) {
+      setToast('Error al actualizar');
+      console.error(err);
+    }
+  };
+
+  const deleteCoctel = async (id) => {
+    if (!supabase) return;
+    try {
+      const { error } = await supabase.from('cocteles').delete().eq('id', id);
+      if (error) throw error;
+      setCocteles(prev => prev.filter(c => c.id !== id));
+      setToast('Cóctel eliminado');
+    } catch (err) {
+      setToast('Error al eliminar');
+      console.error(err);
+    }
+  };
+
+  const counts = {
+    clasicos:   cocteles.filter(c => c.tipo==='clasico' && c.estado==='activo').length,
+    autor:      cocteles.filter(c => c.tipo==='autor'   && c.estado==='activo').length,
+    temporada:  cocteles.filter(c => c.estado==='temporada').length,
+    borradores: cocteles.filter(c => c.estado==='borrador').length,
+    revision:   cocteles.filter(c => c.estado==='revision').length,
+    retirados:  cocteles.filter(c => c.estado==='retirado').length,
+  };
+
+  const TAB_FILTER = {
+    clasicos:   c => c.tipo==='clasico' && c.estado==='activo',
+    autor:      c => c.tipo==='autor'   && c.estado==='activo',
+    temporada:  c => c.estado==='temporada',
+    borradores: c => c.estado==='borrador',
+    revision:   c => c.estado==='revision',
+    retirados:  c => c.estado==='retirado',
+  };
+  const visibles = cocteles.filter(TAB_FILTER[tab] || (()=>true));
+
   const filtered = ingSearch.trim() ? filterIngredients(ingSearch, allIngs) : allIngs;
-
   const liveCost = formIngs.reduce((sum,fi)=>{
     const db = allIngs.find(d=>d.id===fi.id);
     return sum + (db ? db.cpu * parseFloat(fi.qty||0) : 0);
@@ -2212,31 +2338,43 @@ function Carta() {
   };
 
   const resetForm = () => {
-    setForm({ name:'', description:'', price:'' });
+    setForm({ name:'', tipo:'autor', description:'', price:'' });
     setFormIngs([]);
     setNewIng({ id:'', qty:'' });
     setIngSearch('');
     setShowForm(false);
   };
 
-  const saveForm = () => {
-    if (!form.name.trim()||!form.price||formIngs.length===0) return;
-    const ingredients = formIngs.map(fi=>{
-      const db = allIngs.find(d=>d.id===fi.id);
-      const qty = parseFloat(fi.qty);
-      return { name:db?.name||fi.id, qty, unit:db?.unit||'cl', cost: db ? db.cpu*qty : 0 };
-    });
-    setCustoms(p=>[...p,{
-      id:Date.now(), name:form.name.trim(), description:form.description.trim(),
-      price:parseFloat(form.price), cost:liveCost,
-      margin: liveMargin.toFixed(1), ingredients,
-    }]);
-    setToast(`"${form.name.trim()}" añadido a la carta`);
-    resetForm();
-    setTab('autor');
+  const saveForm = async () => {
+    if (!form.name.trim()||!form.price||formIngs.length===0||!supabase) return;
+    try {
+      const ings = formIngs.map(fi=>{
+        const db = allIngs.find(d=>d.id===fi.id);
+        const qty = parseFloat(fi.qty);
+        return { name:db?.name||fi.id, producto_id:fi.id, cantidad:qty, unidad:db?.unit||'cl', coste_unitario:db?db.cpu:0 };
+      });
+      const { data: cData, error: cErr } = await supabase.from('cocteles').insert({
+        local_id: LOCAL_ID,
+        nombre: form.name.trim(),
+        tipo: form.tipo,
+        estado: 'borrador',
+        descripcion: form.description.trim(),
+        precio: parseFloat(form.price),
+      }).select().single();
+      if (cErr) throw cErr;
+      const iData = ings.map(i=>({coctel_id:cData.id,...i}));
+      const { error: iErr } = await supabase.from('coctel_ingredientes').insert(iData);
+      if (iErr) throw iErr;
+      await fetchCocteles();
+      setToast(`"${form.name.trim()}" añadido a cócteles`);
+      resetForm();
+    } catch (err) {
+      setToast('Error al guardar cóctel');
+      console.error(err);
+    }
   };
 
-  const openForm = () => { setShowForm(true); setTab('autor'); };
+  const openForm = () => { setShowForm(true); };
 
   return (
     <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
@@ -2247,7 +2385,7 @@ function Carta() {
         <div>
           <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>CARTA & COSTES</h1>
           <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
-            {CLASSIC_COCKTAILS_DATA.length} clásicos · {customs.length} de autor · Costes calculados con precios de proveedor actuales
+            {counts.clasicos + counts.autor} activos · Gestión completa de cócteles en Supabase
           </p>
         </div>
         <div style={{ display:'flex', gap:10 }}>
@@ -2263,12 +2401,26 @@ function Carta() {
       {showImportCocteles && (
         <ImportCocktailsModal
           onClose={() => setShowImportCocteles(false)}
-          onSave={(items, type) => {
-            if (type === 'clasicos') {
-              setToast(`${items.length} cócteles clásicos — edita en la sección CLÁSICOS`);
-            } else {
-              setCustoms(prev => [...prev, ...items]);
-              setToast(`${items.length} cócteles de autor importados`);
+          onSave={async (items) => {
+            if (!supabase || !items.length) return;
+            try {
+              const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
+              const insertData = items.map(item => ({
+                local_id: LOCAL_ID,
+                nombre: item.name,
+                tipo: item.tipo,
+                estado: 'borrador',
+                descripcion: item.description,
+                precio: item.price,
+              }));
+              const { error } = await supabase.from('cocteles').insert(insertData);
+              if (error) throw error;
+              await fetchCocteles();
+              setShowImportCocteles(false);
+              setToast(`${items.length} cócteles importados como borradores`);
+            } catch (err) {
+              setToast('Error al importar cócteles');
+              console.error(err);
             }
           }}
         />
@@ -2289,32 +2441,66 @@ function Carta() {
       )}
 
       {/* Tabs */}
-      <div style={{ display:'flex', borderBottom:`1px solid ${C.border2}`, marginBottom:22 }}>
-        {[['clasicos',`CLÁSICOS (${CLASSIC_COCKTAILS_DATA.length})`],['autor',`DE AUTOR (${customs.length})`]].map(([id,label])=>(
+      <div style={{ display:'flex', borderBottom:`1px solid ${C.border2}`, marginBottom:22, overflowX:'auto' }}>
+        {[
+          ['clasicos', `CLÁSICOS (${counts.clasicos})`],
+          ['autor', `DE AUTOR (${counts.autor})`],
+          ['temporada', `TEMPORADA (${counts.temporada})`],
+          ['borradores', `BORRADORES (${counts.borradores})`],
+          ['revision', `REVISIÓN (${counts.revision})`],
+          ['retirados', `RETIRADOS (${counts.retirados})`],
+        ].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
-            padding:'10px 26px', background:'transparent', cursor:'pointer',
-            fontFamily:F, fontSize:'10px', letterSpacing:'3px', fontWeight:700,
+            padding:'10px 20px', background:'transparent', cursor:'pointer',
+            fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700, whiteSpace:'nowrap',
             color:tab===id?C.orange:C.textSec, border:'none',
             borderBottom:tab===id?`2px solid ${C.orange}`:'2px solid transparent', marginBottom:'-1px',
           }}>{label}</button>
         ))}
       </div>
 
-      {/* CLÁSICOS */}
-      {tab==='clasicos' && (
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14 }}>
-          {CLASSIC_COCKTAILS_DATA.map(c=><CocktailCard key={c.id} cocktail={c} readonly/>)}
+      {/* Loading state */}
+      {loading && (
+        <div style={{ display:'flex', justifyContent:'center', alignItems:'center', minHeight:300 }}>
+          <div style={{ fontSize:'12px', color:C.textSec }}>⏳ Cargando cócteles...</div>
         </div>
       )}
 
-      {/* DE AUTOR */}
-      {tab==='autor' && (
-        <div>
-          {/* Add form */}
-          {showForm && (
+      {/* Grid */}
+      {!loading && (
+        visibles.length > 0 ? (
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14 }}>
+            {visibles.map(c=>(
+              <CocktailCard
+                key={c.id}
+                cocktail={c}
+                productos={[]}
+                onUpdate={updateCoctel}
+                onDelete={deleteCoctel}
+                onEdit={()=>{ setEditingCocktail(c); setShowEditModal(true); }}
+              />
+            ))}
+          </div>
+        ) : (
+          <div style={{ textAlign:'center', padding:'64px 20px' }}>
+            <div style={{ fontFamily:F, fontSize:'40px', color:C.border2, marginBottom:20 }}>◇</div>
+            <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>
+              {tab==='borradores'?'TODAVÍA NO HAY BORRADORES':'NO HAY CÓCTELES EN ESTA CATEGORÍA'}
+            </div>
+            {(tab==='borradores'||tab==='clasicos'||tab==='autor')&&(
+              <Btn onClick={openForm} sx={{ marginTop:20, padding:'11px 28px', fontSize:'11px' }}>
+                <Plus size={14}/> CREAR CÓCTEL
+              </Btn>
+            )}
+          </div>
+        )
+      )}
+
+      {/* New/Edit Form Modal */}
+      {showForm && (
             <Card accent={C.orange} sx={{ padding:24, marginBottom:24 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
-                <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>NUEVO CÓCTEL DE AUTOR</span>
+                <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>NUEVO CÓCTEL</span>
                 <button onClick={resetForm} style={{ background:'none',border:'none',cursor:'pointer',color:C.textSec,display:'flex' }}><X size={16}/></button>
               </div>
 
@@ -2322,9 +2508,18 @@ function Carta() {
 
                 {/* Left: fields */}
                 <div>
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginBottom:14 }}>
                     <div>
-                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE DEL CÓCTEL *</div>
+                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>TIPO *</div>
+                      <select value={form.tipo} onChange={e=>setForm(f=>({...f,tipo:e.target.value}))}
+                        style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none' }}
+                      >
+                        <option value="clasico">CLÁSICO</option>
+                        <option value="autor">DE AUTOR</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE *</div>
                       <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
                         placeholder="Ej: Paradiso Sour"
                         style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
@@ -2458,32 +2653,6 @@ function Carta() {
               </div>
             </Card>
           )}
-
-          {/* Empty state */}
-          {customs.length===0&&!showForm&&(
-            <div style={{ textAlign:'center', padding:'64px 20px' }}>
-              <div style={{ fontFamily:F, fontSize:'40px', color:C.border2, marginBottom:20 }}>◇</div>
-              <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>TODAVÍA NO HAY CÓCTELES DE AUTOR REGISTRADOS</div>
-              <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginBottom:28, lineHeight:'1.7' }}>
-                Añade los cócteles de la carta de Paradiso para calcular<br/>
-                su coste real y margen con tus precios de proveedor actuales.
-              </div>
-              <Btn onClick={openForm} sx={{ padding:'11px 28px', fontSize:'11px' }}>
-                <Plus size={14}/> AÑADIR PRIMER CÓCTEL DE AUTOR
-              </Btn>
-            </div>
-          )}
-
-          {/* Custom cocktails grid */}
-          {customs.length>0&&(
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14 }}>
-              {customs.map(c=>(
-                <CocktailCard key={c.id} cocktail={c} onEdit={()=>{ setEditingCocktail(c); setShowEditModal(true); }} onDelete={()=>setCustoms(p=>p.filter(x=>x.id!==c.id))}/>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

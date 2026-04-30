@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS public.locales (
   direccion text,
   ciudad text,
   aforo integer,
+  tipo text,
+  telefono text,
+  email text,
+  logo_filename text,
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now())
 );
 
@@ -136,6 +140,50 @@ CREATE INDEX IF NOT EXISTS idx_ventas_fecha ON public.ventas_diarias(fecha);
 ALTER TABLE public.ventas_diarias ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "ventas_ven_su_local" ON public.ventas_diarias
+  FOR ALL
+  USING (auth.uid() IS NOT NULL);
+
+-- ─── TABLE: cocteles ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.cocteles (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  local_id uuid NOT NULL REFERENCES public.locales(id) ON DELETE CASCADE,
+  nombre text NOT NULL,
+  tipo text NOT NULL DEFAULT 'autor' CHECK (tipo IN ('clasico', 'autor')),
+  estado text NOT NULL DEFAULT 'borrador' CHECK (estado IN ('activo', 'borrador', 'revision', 'temporada', 'retirado')),
+  descripcion text,
+  precio numeric NOT NULL DEFAULT 0,
+  foto_url text,
+  created_at timestamptz DEFAULT timezone('utc'::text, now())
+);
+
+CREATE INDEX IF NOT EXISTS idx_cocteles_local_id ON public.cocteles(local_id);
+CREATE INDEX IF NOT EXISTS idx_cocteles_estado ON public.cocteles(estado);
+CREATE INDEX IF NOT EXISTS idx_cocteles_tipo ON public.cocteles(tipo);
+
+ALTER TABLE public.cocteles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "cocteles_ven_su_local" ON public.cocteles
+  FOR ALL
+  USING (auth.uid() IS NOT NULL);
+
+-- ─── TABLE: coctel_ingredientes ───────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.coctel_ingredientes (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  coctel_id uuid NOT NULL REFERENCES public.cocteles(id) ON DELETE CASCADE,
+  producto_id uuid REFERENCES public.productos(id),
+  nombre text NOT NULL,
+  cantidad numeric NOT NULL DEFAULT 0,
+  unidad text DEFAULT 'cl',
+  coste_unitario numeric DEFAULT 0,
+  created_at timestamptz DEFAULT timezone('utc'::text, now())
+);
+
+CREATE INDEX IF NOT EXISTS idx_coctel_ing_coctel_id ON public.coctel_ingredientes(coctel_id);
+CREATE INDEX IF NOT EXISTS idx_coctel_ing_producto_id ON public.coctel_ingredientes(producto_id);
+
+ALTER TABLE public.coctel_ingredientes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "coctel_ingredientes_ven_su_local" ON public.coctel_ingredientes
   FOR ALL
   USING (auth.uid() IS NOT NULL);
 
