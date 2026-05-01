@@ -2226,8 +2226,8 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
 
   const handleSave = async () => {
     if (photoFile) await uploadPhoto();
-    if (!form.nombre.trim() || !form.precio || formIngs.length === 0) {
-      console.error('Validación fallida');
+    if (!form.nombre.trim() || !form.precio) {
+      console.error('Validación fallida: nombre y precio son obligatorios');
       return;
     }
     onSave({
