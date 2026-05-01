@@ -3077,9 +3077,9 @@ function Carta() {
 
 // ─── PRICING ──────────────────────────────────────────────────────────────────
 function Pricing() {
-  const [loading, setLoading] = useState(false);
-  const handleCheckout = async (priceId) => {
-    setLoading(true);
+  const [loading, setLoading] = useState(null); // 'monthly' | 'annual' | null
+  const handleCheckout = async (priceId, plan) => {
+    setLoading(plan);
     try {
       const res = await fetch('/api/create-checkout-session', {
         method: 'POST',
@@ -3087,12 +3087,15 @@ function Pricing() {
         body: JSON.stringify({ priceId }),
       });
       const data = await res.json();
-      if (data.url) window.location.href = data.url;
+      if (data.url) {
+        // Abrir Stripe en NUEVA PESTAÑA para no perder la app
+        window.open(data.url, '_blank', 'noopener,noreferrer');
+      }
     } catch (err) {
       console.error('Checkout error:', err);
       alert('Error al iniciar checkout. Intenta de nuevo.');
     } finally {
-      setLoading(false);
+      setLoading(null);
     }
   };
 
@@ -3107,79 +3110,113 @@ function Pricing() {
           <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, lineHeight:'1.6' }}>
             Gestiona tu bar con datos en tiempo real. 14 días de prueba gratis, sin compromiso.
           </div>
+          {/* Promo banner */}
+          <div style={{ display:'inline-flex', alignItems:'center', gap:8, marginTop:18, padding:'8px 20px', background:`linear-gradient(90deg, ${C.orange}22, ${C.purple}22)`, border:`1px solid ${C.orange}44`, borderRadius:20 }}>
+            <span style={{ fontSize:'14px' }}>🎉</span>
+            <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, fontWeight:700, letterSpacing:'1px' }}>
+              20% DE DESCUENTO EN TU PRIMER MES · SOLO POR TIEMPO LIMITADO
+            </span>
+          </div>
         </div>
 
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:40, marginBottom:80 }}>
           {/* Monthly Plan */}
-          <Card accent={C.orange} sx={{ padding:40, position:'relative' }}>
+          <Card accent={C.orange} sx={{ padding:40, position:'relative', overflow:'hidden' }}>
+            <div style={{ position:'absolute', top:-40, right:-40, width:120, height:120, background:C.orange, filter:'blur(60px)', opacity:0.08, pointerEvents:'none' }}/>
+            <div style={{ position:'absolute', top:20, right:20 }}>
+              <Badge label='🎉 20% PRIMER MES' color={C.orange} bg={C.orangeBg}/>
+            </div>
             <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>PLAN</div>
             <div style={{ fontFamily:F, fontSize:'28px', fontWeight:700, color:C.text, marginBottom:4 }}>Mensual</div>
-            <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:32 }}>
+            <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:4 }}>
+              <span style={{ fontFamily:F, fontSize:'18px', color:C.textSec, textDecoration:'line-through' }}>€249</span>
               <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.orange }}>€199</span>
               <span style={{ fontFamily:F, fontSize:'13px', color:C.textSec }}>/mes</span>
             </div>
+            <div style={{ fontFamily:F, fontSize:'11px', color:C.orange, fontWeight:700, marginBottom:28 }}>
+              ✦ Primer mes con 20% off · después €249/mes
+            </div>
             <div style={{ fontSize:'12px', color:C.textSec, lineHeight:'1.8', marginBottom:32, paddingBottom:32, borderBottom:`1px solid ${C.border2}` }}>
-              <div style={{ marginBottom:10 }}>✓ Acceso a todas las funciones</div>
-              <div style={{ marginBottom:10 }}>✓ Reportes en tiempo real</div>
-              <div style={{ marginBottom:10 }}>✓ Gestión de staff completa</div>
-              <div style={{ marginBottom:10 }}>✓ Base de datos de cócteles</div>
-              <div>✓ Soporte prioritario</div>
+              <div style={{ marginBottom:8 }}>✓ Acceso completo a todas las funciones</div>
+              <div style={{ marginBottom:8 }}>✓ Reportes en tiempo real</div>
+              <div style={{ marginBottom:8 }}>✓ Gestión de staff ilimitada</div>
+              <div style={{ marginBottom:8 }}>✓ Base de datos de cócteles</div>
+              <div style={{ marginBottom:8 }}>✓ Agente IA BarOps</div>
+              <div>✓ Soporte prioritario 24/7</div>
             </div>
             <Btn
-              onClick={() => handleCheckout(monthlyPrice)}
-              disabled={!monthlyPrice || loading}
-              sx={{ width:'100%', justifyContent:'center', padding:'11px 28px', marginBottom:12 }}
+              onClick={() => handleCheckout(monthlyPrice, 'monthly')}
+              disabled={!monthlyPrice || !!loading}
+              sx={{ width:'100%', justifyContent:'center', padding:'13px 28px', marginBottom:12, fontSize:'11px' }}
             >
-              {loading ? 'Cargando...' : 'PROBAR 14 DÍAS GRATIS'}
+              {loading === 'monthly' ? '⏳ Abriendo Stripe...' : '🚀 PROBAR 14 DÍAS GRATIS'}
             </Btn>
-            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, textAlign:'center', letterSpacing:'1px' }}>
-              Se requiere tarjeta. Cancela cuando quieras.
+            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, textAlign:'center', letterSpacing:'0.5px' }}>
+              Se requiere tarjeta · Cancela cuando quieras · Se abre en nueva pestaña
             </div>
           </Card>
 
           {/* Annual Plan */}
-          <Card accent={C.teal} sx={{ padding:40, position:'relative', background:`linear-gradient(135deg, ${C.card} 0%, ${C.card} 100%), linear-gradient(135deg, ${C.teal}08 0%, transparent 100%)` }}>
-            <div style={{ position:'absolute', top:20, right:20 }}>
-              <Badge label='MÁS POPULAR · AHORRA 788€' color={C.teal} bg={C.tealBg}/>
+          <Card accent={C.teal} sx={{ padding:40, position:'relative', overflow:'hidden', background:`linear-gradient(145deg, #0f1a18 0%, ${C.card} 100%)` }}>
+            <div style={{ position:'absolute', top:-40, right:-40, width:120, height:120, background:C.teal, filter:'blur(60px)', opacity:0.12, pointerEvents:'none' }}/>
+            <div style={{ position:'absolute', top:20, right:20, display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6 }}>
+              <Badge label='🔥 MÁS POPULAR' color={C.teal} bg={C.tealBg}/>
+              <Badge label='AHORRA €788/AÑO' color={C.teal} bg={C.tealBg}/>
             </div>
             <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>PLAN</div>
             <div style={{ fontFamily:F, fontSize:'28px', fontWeight:700, color:C.text, marginBottom:4 }}>Anual</div>
-            <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:8 }}>
-              <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.teal }}>€1600</span>
+            <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:4 }}>
+              <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.teal }}>€1.600</span>
               <span style={{ fontFamily:F, fontSize:'13px', color:C.textSec }}>/año</span>
             </div>
-            <div style={{ fontFamily:F, fontSize:'11px', color:C.teal, marginBottom:32, fontWeight:700 }}>
-              € 133/mes (ahorra casi 4 meses)
+            <div style={{ display:'flex', flexDirection:'column', gap:4, marginBottom:28 }}>
+              <div style={{ fontFamily:F, fontSize:'12px', color:C.teal, fontWeight:700 }}>
+                ≈ €133/mes · equivale a casi <span style={{ color:'#fff' }}>4 meses gratis</span>
+              </div>
+              <span style={{ fontFamily:F, fontSize:'10px', background:`${C.teal}22`, color:C.teal, border:`1px solid ${C.teal}55`, padding:'2px 10px', borderRadius:10, fontWeight:700, letterSpacing:'1px', display:'inline-block', width:'fit-content' }}>
+                MEJOR PRECIO GARANTIZADO
+              </span>
             </div>
             <div style={{ fontSize:'12px', color:C.textSec, lineHeight:'1.8', marginBottom:32, paddingBottom:32, borderBottom:`1px solid ${C.border2}` }}>
-              <div style={{ marginBottom:10 }}>✓ Acceso a todas las funciones</div>
-              <div style={{ marginBottom:10 }}>✓ Reportes en tiempo real</div>
-              <div style={{ marginBottom:10 }}>✓ Gestión de staff completa</div>
-              <div style={{ marginBottom:10 }}>✓ Base de datos de cócteles</div>
-              <div>✓ Soporte prioritario</div>
+              <div style={{ marginBottom:8 }}>✓ Todo lo del plan mensual</div>
+              <div style={{ marginBottom:8 }}>✓ Acceso anticipado a nuevas funciones</div>
+              <div style={{ marginBottom:8 }}>✓ Manager de onboarding dedicado</div>
+              <div style={{ marginBottom:8 }}>✓ Exportación ilimitada de datos</div>
+              <div style={{ marginBottom:8 }}>✓ Formación inicial incluida (1h)</div>
+              <div>✓ SLA 99.9% uptime garantizado</div>
             </div>
             <Btn
               variant="teal"
-              onClick={() => handleCheckout(annualPrice)}
-              disabled={!annualPrice || loading}
-              sx={{ width:'100%', justifyContent:'center', padding:'11px 28px', marginBottom:12 }}
+              onClick={() => handleCheckout(annualPrice, 'annual')}
+              disabled={!annualPrice || !!loading}
+              sx={{ width:'100%', justifyContent:'center', padding:'13px 28px', marginBottom:12, fontSize:'11px', boxShadow:`0 4px 20px ${C.teal}44` }}
             >
-              {loading ? 'Cargando...' : 'PROBAR 14 DÍAS GRATIS'}
+              {loading === 'annual' ? '⏳ Abriendo Stripe...' : '⚡ PROBAR 14 DÍAS GRATIS'}
             </Btn>
-            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, textAlign:'center', letterSpacing:'1px' }}>
-              Se requiere tarjeta. Cancela cuando quieras.
+            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, textAlign:'center', letterSpacing:'0.5px' }}>
+              Se requiere tarjeta · Cancela cuando quieras · Se abre en nueva pestaña
             </div>
           </Card>
         </div>
 
+        {/* Trust footer */}
         <div style={{ textAlign:'center', borderTop:`1px solid ${C.border2}`, paddingTop:40 }}>
-          <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginBottom:20, lineHeight:'1.8' }}>
-            Pagos 100% seguros mediante <span style={{ fontWeight:700, color:C.text }}>Stripe</span> · Todos los métodos de pago aceptados<br/>
-            Facturación transparente · Sin sorpresas
+          <div style={{ display:'flex', justifyContent:'center', gap:32, marginBottom:24, flexWrap:'wrap' }}>
+            {[
+              { icon:'🔒', label:'Pago 100% seguro', sub:'Encriptación SSL' },
+              { icon:'↩️', label:'Sin permanencia', sub:'Cancela en 1 clic' },
+              { icon:'📊', label:'Sin sorpresas', sub:'Facturación clara' },
+              { icon:'⚡', label:'Activo al instante', sub:'Acceso inmediato' },
+            ].map((t,i) => (
+              <div key={i} style={{ textAlign:'center' }}>
+                <div style={{ fontSize:'20px', marginBottom:4 }}>{t.icon}</div>
+                <div style={{ fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700 }}>{t.label}</div>
+                <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec }}>{t.sub}</div>
+              </div>
+            ))}
           </div>
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:12 }}>
-            <ShoppingCart size={14} color={C.textSec}/>
-            <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1px' }}>APPLE PAY · GOOGLE PAY · TARJETA</span>
+          <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, lineHeight:'1.8' }}>
+            Pagos gestionados por <span style={{ fontWeight:700, color:C.text }}>Stripe</span> · Apple Pay · Google Pay · Tarjeta
           </div>
         </div>
       </div>
