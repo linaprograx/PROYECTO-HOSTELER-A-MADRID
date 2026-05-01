@@ -2173,13 +2173,16 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
 
   const filtered = ingSearch.trim() ? filterIngredients(ingSearch, allIngs) : [];
 
+  const UUID_REGEX_EDIT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   const addIng = () => {
     if (!newIng.id || !newIng.qty || parseFloat(newIng.qty) <= 0) return;
     const ingData = allIngs.find(i => i.id === newIng.id);
+    const isRealUUID = UUID_REGEX_EDIT.test(newIng.id);
     setFormIngs(p => [...p, {
       id: Date.now(),
       coctel_id: cocktail?.id,
-      producto_id: newIng.id,
+      producto_id: isRealUUID ? newIng.id : null,
       nombre: ingData?.name || newIng.id,
       cantidad: parseFloat(newIng.qty),
       unidad: newIng.unit,
@@ -2673,10 +2676,14 @@ function Carta() {
         photoUrl = await uploadPhoto(photoFile);
       }
 
+      // producto_id es UUID en Supabase — los IDs del catálogo local (ej: 'zumo_limon') no son UUIDs
+      // Se detecta si el ID es un UUID real (formato xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+      const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const ings = formIngs.map(fi=>{
         const db = allIngs.find(d=>d.id===fi.id);
         const qty = parseFloat(fi.qty);
-        return { nombre:db?.name||fi.id, producto_id:fi.id, cantidad:qty, unidad:db?.unit||'cl', coste_unitario:db?.cpu||0 };
+        const isRealUUID = UUID_REGEX.test(fi.id);
+        return { nombre:db?.name||fi.id, producto_id: isRealUUID ? fi.id : null, cantidad:qty, unidad:db?.unit||'cl', coste_unitario:db?.cpu||0 };
       });
       const { data: cData, error: cErr } = await supabase.from('cocteles').insert({
         local_id: LOCAL_ID,
