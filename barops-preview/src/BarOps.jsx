@@ -2524,13 +2524,29 @@ function Carta() {
     if (!supabase) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data: cocteles_data, error: cErr } = await supabase
         .from('cocteles')
-        .select('*, coctel_ingredientes(*)')
+        .select('*')
         .eq('local_id', LOCAL_ID)
         .order('created_at', { ascending: false });
-      if (error) throw error;
-      setCocteles(data || []);
+      if (cErr) throw cErr;
+
+      const { data: ings_data, error: iErr } = await supabase
+        .from('coctel_ingredientes')
+        .select('*');
+      if (iErr) throw iErr;
+
+      const ing_map = {};
+      (ings_data || []).forEach(ing => {
+        if (!ing_map[ing.coctel_id]) ing_map[ing.coctel_id] = [];
+        ing_map[ing.coctel_id].push(ing);
+      });
+
+      const merged = (cocteles_data || []).map(c => ({
+        ...c,
+        coctel_ingredientes: ing_map[c.id] || []
+      }));
+      setCocteles(merged);
     } catch (err) {
       setToast('Error al cargar cócteles');
       console.error(err);
