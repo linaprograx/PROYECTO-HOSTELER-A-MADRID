@@ -2146,7 +2146,7 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
   };
 
   const uploadPhoto = async () => {
-    if (!photoFile || !supabase) return;
+    if (!photoFile || !supabase) return null;
     setUploading(true);
     try {
       const ext = photoFile.name.split('.').pop();
@@ -2155,10 +2155,12 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
       if (error) throw error;
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
       const photoUrl = `${SUPABASE_URL}/storage/v1/object/public/cocteles/${filename}`;
-      handleFormChange('foto_url', photoUrl);
+      handleFormChange('foto_url', photoUrl); // actualiza preview en UI
       setPhotoFile(null);
+      return photoUrl; // ← retorna la URL para usarla directamente
     } catch (err) {
       console.error('Photo upload error:', err);
+      return null;
     } finally {
       setUploading(false);
     }
@@ -2225,7 +2227,13 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
   };
 
   const handleSave = async () => {
-    if (photoFile) await uploadPhoto();
+    // Subir foto ANTES de construir el payload; la URL se obtiene directamente
+    // (no se puede depender de form.foto_url porque setForm es async en React)
+    let finalFotoUrl = form.foto_url || null;
+    if (photoFile) {
+      const uploadedUrl = await uploadPhoto();
+      if (uploadedUrl) finalFotoUrl = uploadedUrl;
+    }
     if (!form.nombre.trim() || !form.precio) {
       console.error('Validación fallida: nombre y precio son obligatorios');
       return;
@@ -2234,6 +2242,7 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
       id: cocktail?.id,
       local_id: LOCAL_ID,
       ...form,
+      foto_url: finalFotoUrl, // ← usa la URL fresca, no el estado stale
       alergenos: JSON.stringify(form.alergenos),
       coctel_ingredientes: formIngs,
     });
