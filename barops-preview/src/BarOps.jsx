@@ -2768,12 +2768,33 @@ function Carta() {
             if (!supabase) return;
             try {
               const { coctel_ingredientes, id, local_id, ...coctelData } = updated;
-              const coctelUpdate = {
-                ...coctelData,
+              // Columnas base (siempre existen en cocteles)
+              const coctelBase = {
+                nombre: coctelData.nombre,
+                tipo: coctelData.tipo,
+                estado: coctelData.estado,
+                descripcion: coctelData.descripcion,
                 precio: parseFloat(coctelData.precio) || 0,
-                tiempo_preparacion: parseInt(coctelData.tiempo_preparacion) || 0,
+                foto_url: coctelData.foto_url || null,
               };
-              const { error: cErr } = await supabase.from('cocteles').update(coctelUpdate).eq('id', id);
+              // Columnas fase 2 (requieren migración 003)
+              const fase2Cols = {
+                historia_coctel: coctelData.historia_coctel || null,
+                instrucciones_preparacion: coctelData.instrucciones_preparacion || null,
+                cristaleria: coctelData.cristaleria || 'copa',
+                guarnicion: coctelData.guarnicion || null,
+                tiempo_preparacion: parseInt(coctelData.tiempo_preparacion) || 0,
+                alergenos: coctelData.alergenos || null,
+                fecha_inicio_temporada: coctelData.fecha_inicio_temporada || null,
+                fecha_fin_temporada: coctelData.fecha_fin_temporada || null,
+              };
+              // Intentar update completo; si falla, usar solo columnas base
+              let { error: cErr } = await supabase.from('cocteles').update({ ...coctelBase, ...fase2Cols }).eq('id', id);
+              if (cErr) {
+                // Columnas fase 2 no existen aún → fallback a columnas base
+                console.warn('Fase 2 columns not found, saving base columns only:', cErr.message);
+                ({ error: cErr } = await supabase.from('cocteles').update(coctelBase).eq('id', id));
+              }
               if (cErr) throw cErr;
 
               if (coctel_ingredientes && coctel_ingredientes.length > 0) {
