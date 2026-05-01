@@ -9,7 +9,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { priceId } = req.body;
+    const { priceId, couponId } = req.body;
 
     if (!priceId) {
       return res.status(400).json({ error: 'Missing priceId' });
@@ -18,7 +18,7 @@ export default async function handler(req, res) {
     // Detectar origen para URLs de redirección
     const origin = req.headers.origin || 'http://localhost:5174';
 
-    const session = await stripe.checkout.sessions.create({
+    const sessionParams = {
       mode: 'subscription',
       payment_method_types: ['card'],
       line_items: [
@@ -29,10 +29,16 @@ export default async function handler(req, res) {
       ],
       subscription_data: {
         trial_period_days: 14,
+        // Aplicar coupon promocional si se proporciona (ej: 50% off 3 meses)
+        ...(couponId ? { coupon: couponId } : {}),
       },
+      // Mostrar descuento en la página de Stripe si hay coupon
+      ...(couponId ? { discounts: [{ coupon: couponId }] } : {}),
       success_url: `${origin}/?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/?payment=canceled`,
-    });
+    };
+
+    const session = await stripe.checkout.sessions.create(sessionParams);
 
     return res.json({ url: session.url });
   } catch (error) {

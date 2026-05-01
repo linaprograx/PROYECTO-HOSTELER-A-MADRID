@@ -3085,10 +3085,14 @@ function Pricing() {
     // Si se abre después del await, el navegador lo bloquea como popup no solicitado
     const newTab = window.open('about:blank', '_blank');
     try {
+      // Para el plan mensual, aplicar coupon promocional si está configurado
+      const couponId = plan === 'monthly'
+        ? (import.meta.env.VITE_STRIPE_COUPON_MONTHLY || null)
+        : null;
       const res = await fetch('/api/create-checkout-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ priceId }),
+        body: JSON.stringify({ priceId, ...(couponId ? { couponId } : {}) }),
       });
       const data = await res.json();
       if (data.url && newTab) {
@@ -3105,8 +3109,10 @@ function Pricing() {
     }
   };
 
-  const monthlyPrice = import.meta.env.VITE_STRIPE_PRICE_MONTHLY || 'price_1TRO20BJLboiQ0lfe7vjpMaq';
-  const annualPrice = import.meta.env.VITE_STRIPE_PRICE_ANNUAL || 'price_1TRNylBJLboiQ0lfk73lPLeu';
+  const monthlyPrice = import.meta.env.VITE_STRIPE_PRICE_MONTHLY || 'price_1TRNylBJLboiQ0lfk73lPLeu';
+  const annualPrice  = import.meta.env.VITE_STRIPE_PRICE_ANNUAL  || 'price_1TRO20BJLboiQ0lfe7vjpMaq';
+  // coupon para el trimestre promo (50% off x3 meses) — crear en Stripe Dashboard y poner ID aquí
+  // const monthlyCoupon = import.meta.env.VITE_STRIPE_COUPON_MONTHLY || null;
 
   return (
     <div style={{ flex:1, overflow:'auto', padding:'40px 60px' }}>
