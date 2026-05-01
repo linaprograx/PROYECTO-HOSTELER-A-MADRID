@@ -1935,7 +1935,7 @@ function Analytics() {
 }
 
 
-function CocktailCard({ cocktail, productos={productos}, onUpdate, onDelete, onEdit }) {
+function CocktailCard({ cocktail, productos=[], onUpdate, onDelete, onEdit }) {
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -2065,7 +2065,7 @@ function CocktailCard({ cocktail, productos={productos}, onUpdate, onDelete, onE
 }
 
 // ─── EDIT COCKTAIL MODAL (Drawer FASE 2) ──────────────────────────────────────
-function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos={productos} }) {
+function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) {
   const { customIngs=[] } = useApp() || {};
   const allIngs = [...INGREDIENTS_DB, ...customIngs];
   const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
@@ -2531,10 +2531,16 @@ function Carta() {
         .order('created_at', { ascending: false });
       if (cErr) throw cErr;
 
-      const { data: ings_data, error: iErr } = await supabase
-        .from('coctel_ingredientes')
-        .select('*');
-      if (iErr) throw iErr;
+      const coctelIds = (cocteles_data || []).map(c => c.id);
+      let ings_data = [];
+      if (coctelIds.length > 0) {
+        const { data: iData, error: iErr } = await supabase
+          .from('coctel_ingredientes')
+          .select('*')
+          .in('coctel_id', coctelIds);
+        if (iErr) throw iErr;
+        ings_data = iData || [];
+      }
 
       const ing_map = {};
       (ings_data || []).forEach(ing => {
@@ -2750,7 +2756,6 @@ function Carta() {
         <EditCocktailModal
           cocktail={editingCocktail}
           isOpen={showEditModal}
-          productos={productos}
           onClose={() => { setShowEditModal(false); setEditingCocktail(null); }}
           onSave={async (updated) => {
             if (!supabase) return;
@@ -2825,7 +2830,6 @@ function Carta() {
               <CocktailCard
                 key={c.id}
                 cocktail={c}
-                productos={productos}
                 onUpdate={updateCoctel}
                 onDelete={deleteCoctel}
                 onEdit={()=>{ setEditingCocktail(c); setShowEditModal(true); }}
