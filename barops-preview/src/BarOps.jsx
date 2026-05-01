@@ -1218,36 +1218,355 @@ function ImportModal({ onClose }) {
   );
 }
 
+// ─── INVENTARIO: LOCAL_ID ────────────────────────────────────────────────────
+const INV_LOCAL_ID = '00000000-0000-0000-0000-000000000001';
+
+// ─── INVENTARIO: ESTADO BADGE ────────────────────────────────────────────────
+function EstadoBadge({ stock, minimo }) {
+  const s = parseFloat(stock)||0, m = parseFloat(minimo)||0;
+  if (m===0) return <Badge label="ESTABLE" color={C.teal} bg={C.tealBg}/>;
+  if (s<=m) return <Badge label="CRITICO" color={C.red} bg={C.redBg}/>;
+  if (s<=m*1.5) return <Badge label="PREVENTIVO" color={C.amber} bg={C.amberBg}/>;
+  return <Badge label="ESTABLE" color={C.teal} bg={C.tealBg}/>;
+}
+
+// ─── INVENTARIO: BARRA DE STOCK ──────────────────────────────────────────────
+function StockMiniBar({ stock, minimo }) {
+  const s = parseFloat(stock)||0, m = parseFloat(minimo)||0;
+  const max = m>0 ? m*3 : Math.max(s*1.5,1);
+  const pct = Math.min(100, (s/max)*100);
+  const color = m>0 ? (s<=m?C.red : s<=m*2?C.amber : C.teal) : C.teal;
+  return (
+    <div style={{ width:'100%', height:3, background:'#2a2a2a', borderRadius:2, marginTop:4, overflow:'hidden' }}>
+      <div style={{ width:`${pct}%`, height:'100%', background:color, borderRadius:2 }}/>
+    </div>
+  );
+}
+
+// ─── INVENTARIO: EDICION INLINE DE STOCK ─────────────────────────────────────
+function InlineStock({ item, onSaved, setToast }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal]         = useState('');
+  const [saving, setSaving]   = useState(false);
+  const inputRef = useRef(null);
+
+  const startEdit = () => {
+    setVal(String(parseFloat(item.stock_actual)||0));
+    setEditing(true);
+    setTimeout(() => { inputRef.current?.select(); }, 30);
+  };
+
+  const cancel = () => setEditing(false);
+
+  const confirm = async () => {
+    const newVal = parseFloat(val);
+    if (isNaN(newVal)) { cancel(); return; }
+    setSaving(true);
+    try {
+      const oldVal = parseFloat(item.stock_actual)||0;
+      const diff   = newVal - oldVal;
+      // UPDATE productos
+      const payload = { stock_actual: newVal };
+      try { payload.updated_at = new Date().toISOString(); } catch(_) {}
+      const { error } = await supabase.from('productos').update(payload).eq('id', item.id);
+      if (error) throw error;
+      // INSERT movimiento
+      await supabase.from('movimientos_stock').insert({
+        producto_id: item.id,
+        local_id:    INV_LOCAL_ID,
+        tipo:        'ajuste',
+        cantidad:    diff,
+        motivo:      'Ajuste manual de stock',
+        fecha:       new Date().toISOString().split('T')[0],
+      });
+      onSaved(item.id, newVal);
+      setToast('Stock actualizado');
+      setEditing(false);
+    } catch(e) {
+      setToast('Error: ' + e.message);
+    } finally { setSaving(false); }
+  };
+
+  const handleKey = (e) => {
+    if (e.key==='Enter') confirm();
+    if (e.key==='Escape') cancel();
+  };
+
+  if (!editing) return (
+    <div
+      onClick={startEdit}
+      style={{ cursor:'pointer', display:'inline-flex', alignItems:'center', gap:5 }}
+      title="Clic para editar"
+    >
+      <span style={{ fontFamily:F, fontSize:'15px', fontWeight:700, color:C.text }}>{parseFloat(item.stock_actual)||0}</span>
+      <span style={{ fontFamily:F, fontSize:'10px', color:C.textSec }}>{item.unidad}</span>
+      <span style={{ fontSize:'9px', color:C.textSec, opacity:0, transition:'opacity 0.15s' }}
+        className="edit-icon">✎</span>
+    </div>
+  );
+
+  return (
+    <div style={{ display:'inline-flex', alignItems:'center', gap:4 }}>
+      <input
+        ref={inputRef}
+        type="number"
+        value={val}
+        onChange={e=>setVal(e.target.value)}
+        onKeyDown={handleKey}
+        style={{
+          width:70, background:'transparent', border:'none',
+          borderBottom:`1px solid ${C.orange}`, outline:'none',
+          fontFamily:F, fontSize:'15px', fontWeight:700, color:C.orange,
+          padding:'0 2px',
+        }}
+      />
+      <span style={{ fontFamily:F, fontSize:'10px', color:C.textSec }}>{item.unidad}</span>
+      <button onClick={confirm} disabled={saving} style={{ background:'none', border:'none', cursor:'pointer', color:C.teal, fontSize:'14px', padding:0, fontWeight:700 }}>✓</button>
+      <button onClick={cancel}  style={{ background:'none', border:'none', cursor:'pointer', color:C.red,  fontSize:'14px', padding:0, fontWeight:700 }}>✕</button>
+    </div>
+  );
+}
+
+// ─── INVENTARIO: DRAWER DE EDICION ───────────────────────────────────────────
+function ProductDrawer({ item, isOpen, onClose, onSaved, setToast }) {
+  const CATS = ['Destilados','Frutas y Frescos','Secos','Texturizantes','Mixers','Otros'];
+  const UNITS = ['ud','bot','cl','ml','l','kg','g'];
+  const [tab, setTab]   = useState('producto');
+  const [form, setForm] = useState({});
+  const [hist, setHist] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [loadingHist, setLoadingHist] = useState(false);
+
+  useEffect(() => {
+    if (!item) return;
+    setForm({
+      nombre:             item.nombre||'',
+      categoria:          item.categoria||'',
+      unidad:             item.unidad||'ud',
+      stock_actual:       String(parseFloat(item.stock_actual)||0),
+      stock_minimo:       String(parseFloat(item.stock_minimo)||0),
+      coste_unitario:     String(parseFloat(item.coste_unitario)||0),
+      proveedor:          item.proveedor||'',
+      telefono_proveedor: item.telefono_proveedor||'',
+      notas:              item.notas||'',
+      ultima_reposicion:  item.ultima_reposicion||'',
+    });
+    setTab('producto');
+  }, [item]);
+
+  useEffect(() => {
+    if (!isOpen || !item || tab!=='historial') return;
+    (async () => {
+      setLoadingHist(true);
+      try {
+        const { data } = await supabase.from('movimientos_stock')
+          .select('*').eq('producto_id', item.id)
+          .order('created_at', { ascending:false }).limit(20);
+        setHist(data||[]);
+      } catch(_) {}
+      finally { setLoadingHist(false); }
+    })();
+  }, [isOpen, item, tab]);
+
+  const fmtFecha = (d) => {
+    if (!d) return '';
+    const dt = new Date(d), now = new Date();
+    const diff = Math.floor((now - dt) / 86400000);
+    if (diff===0) return 'Hoy';
+    if (diff===1) return 'Ayer';
+    return dt.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'});
+  };
+
+  const tipoColor = { entrada:C.teal, salida:C.orange, ajuste:C.amber, merma:C.red };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const oldStock = parseFloat(item.stock_actual)||0;
+      const newStock = parseFloat(form.stock_actual)||0;
+      const payload  = {
+        nombre:             form.nombre,
+        categoria:          form.categoria,
+        unidad:             form.unidad,
+        stock_actual:       newStock,
+        stock_minimo:       parseFloat(form.stock_minimo)||0,
+        coste_unitario:     parseFloat(form.coste_unitario)||0,
+        proveedor:          form.proveedor||null,
+        telefono_proveedor: form.telefono_proveedor||null,
+        notas:              form.notas||null,
+        ultima_reposicion:  form.ultima_reposicion||null,
+      };
+      try { payload.updated_at = new Date().toISOString(); } catch(_) {}
+      const { error } = await supabase.from('productos').update(payload).eq('id', item.id);
+      if (error) throw error;
+      if (newStock !== oldStock) {
+        await supabase.from('movimientos_stock').insert({
+          producto_id: item.id, local_id: INV_LOCAL_ID,
+          tipo:'ajuste', cantidad: newStock-oldStock,
+          motivo:'Edicion desde ficha de producto',
+          fecha: new Date().toISOString().split('T')[0],
+        });
+      }
+      onSaved(item.id, payload);
+      setToast(`${form.nombre} guardado`);
+      onClose();
+    } catch(e) { setToast('Error: '+e.message); }
+    finally { setSaving(false); }
+  };
+
+  if (!isOpen||!item) return null;
+  const f = (k,v) => setForm(p=>({...p,[k]:v}));
+  const stockVal   = parseFloat(form.stock_actual)||0;
+  const costVal    = parseFloat(form.coste_unitario)||0;
+  const stockMin   = parseFloat(form.stock_minimo)||0;
+  const valorTotal = (stockVal * costVal).toFixed(2);
+  const estadoStr  = stockMin===0?'ESTABLE':stockVal<=stockMin?'CRITICO':stockVal<=stockMin*1.5?'PREVENTIVO':'ESTABLE';
+  const estadoCol  = estadoStr==='CRITICO'?C.red:estadoStr==='PREVENTIVO'?C.amber:C.teal;
+
+  const inputStyle = {
+    width:'100%', padding:'8px 10px', fontFamily:F, fontSize:'12px',
+    background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3,
+    color:C.text, outline:'none',
+  };
+  const labelStyle = { display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 };
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:1200 }}/>
+      <div style={{
+        position:'fixed', top:0, right:0, width:480, height:'100vh',
+        background:C.card, borderLeft:`1px solid ${C.border2}`,
+        zIndex:1201, display:'flex', flexDirection:'column', overflowY:'hidden',
+      }}>
+        {/* Header */}
+        <div style={{ padding:'20px 24px', borderBottom:`1px solid ${C.border2}`, display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
+          <div>
+            <div style={{ fontFamily:F, fontSize:'16px', fontWeight:700, color:C.text }}>{form.nombre||item.nombre}</div>
+            <div style={{ marginTop:4 }}><Badge label={form.categoria||'—'} color={C.orange} bg={C.orangeBg}/></div>
+          </div>
+          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}><X size={18}/></button>
+        </div>
+        {/* Tabs */}
+        <div style={{ display:'flex', borderBottom:`1px solid ${C.border2}`, flexShrink:0 }}>
+          {[['producto','PRODUCTO'],['historial','HISTORIAL']].map(([id,label])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{
+              flex:1, padding:'12px', fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700,
+              background:'none', border:'none', cursor:'pointer',
+              color:tab===id?C.orange:C.textSec,
+              borderBottom:tab===id?`2px solid ${C.orange}`:'2px solid transparent',
+            }}>{label}</button>
+          ))}
+        </div>
+        {/* Body */}
+        <div style={{ flex:1, overflowY:'auto', padding:'20px 24px' }}>
+          {tab==='producto' ? (
+            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              <div><label style={labelStyle}>NOMBRE</label><input style={inputStyle} value={form.nombre} onChange={e=>f('nombre',e.target.value)}/></div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                <div>
+                  <label style={labelStyle}>CATEGORIA</label>
+                  <select style={inputStyle} value={form.categoria} onChange={e=>f('categoria',e.target.value)}>
+                    {CATS.map(c=><option key={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={labelStyle}>UNIDAD</label>
+                  <select style={inputStyle} value={form.unidad} onChange={e=>f('unidad',e.target.value)}>
+                    {UNITS.map(u=><option key={u}>{u}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                <div>
+                  <label style={labelStyle}>STOCK ACTUAL</label>
+                  <input type="number" style={inputStyle} value={form.stock_actual} onChange={e=>f('stock_actual',e.target.value)}/>
+                </div>
+                <div>
+                  <label style={labelStyle}>STOCK MINIMO</label>
+                  <input type="number" style={inputStyle} value={form.stock_minimo} onChange={e=>f('stock_minimo',e.target.value)}/>
+                  <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, marginTop:3 }}>Alerta cuando baje de este nivel</div>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>COSTE UNITARIO (€)</label>
+                <input type="number" style={inputStyle} value={form.coste_unitario} onChange={e=>f('coste_unitario',e.target.value)}/>
+                <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, marginTop:3 }}>Coste por {form.unidad} de este producto</div>
+              </div>
+              <div>
+                <label style={labelStyle}>PROVEEDOR</label>
+                <input style={inputStyle} value={form.proveedor} onChange={e=>f('proveedor',e.target.value)} placeholder="Nombre del proveedor principal"/>
+              </div>
+              <div>
+                <label style={labelStyle}>TELEFONO PROVEEDOR</label>
+                <input style={inputStyle} value={form.telefono_proveedor} onChange={e=>f('telefono_proveedor',e.target.value)} placeholder="+34 600 000 000"/>
+              </div>
+              <div>
+                <label style={labelStyle}>ULTIMA REPOSICION</label>
+                <input type="date" style={inputStyle} value={form.ultima_reposicion} onChange={e=>f('ultima_reposicion',e.target.value)}/>
+              </div>
+              <div>
+                <label style={labelStyle}>NOTAS</label>
+                <textarea rows={3} style={{...inputStyle, resize:'vertical'}} value={form.notas} onChange={e=>f('notas',e.target.value)} placeholder="Notas internas, marca preferida, alternativas..."/>
+              </div>
+              {/* Resumen */}
+              <div style={{ background:'#1A1A1A', border:`1px solid ${C.border}`, borderRadius:4, padding:'14px 16px' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+                  <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec }}>Valor en inventario</span>
+                  <span style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:C.teal }}>€{valorTotal}</span>
+                </div>
+                <div style={{ display:'flex', justifyContent:'space-between' }}>
+                  <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec }}>Estado</span>
+                  <span style={{ fontFamily:F, fontSize:'11px', fontWeight:700, color:estadoCol }}>{estadoStr}</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div>
+              {loadingHist ? (
+                <div style={{ textAlign:'center', padding:32, fontFamily:F, fontSize:'12px', color:C.textSec }}>Cargando historial...</div>
+              ) : hist.length===0 ? (
+                <div style={{ textAlign:'center', padding:32 }}>
+                  <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec }}>Sin movimientos registrados todavia</div>
+                </div>
+              ) : (
+                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                  {hist.map(m=>(
+                    <div key={m.id} style={{ padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, display:'flex', alignItems:'center', gap:12 }}>
+                      <div style={{ minWidth:60, fontFamily:F, fontSize:'10px', color:C.textSec }}>{fmtFecha(m.fecha||m.created_at)}</div>
+                      <Badge label={(m.tipo||'ajuste').toUpperCase()} color={tipoColor[m.tipo]||C.amber} bg={(tipoColor[m.tipo]||C.amber)+'18'}/>
+                      <span style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:(m.cantidad||0)>=0?C.teal:C.red }}>
+                        {(m.cantidad||0)>=0?'+':''}{m.cantidad||0}
+                      </span>
+                      <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec, flex:1 }}>{m.motivo||''}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        {/* Footer save */}
+        <div style={{ padding:'16px 24px', borderTop:`1px solid ${C.border2}`, flexShrink:0 }}>
+          <Btn onClick={handleSave} disabled={saving} sx={{ width:'100%', justifyContent:'center', padding:'13px', fontSize:'11px', letterSpacing:'2px' }}>
+            {saving?'GUARDANDO...':'GUARDAR CAMBIOS'}
+          </Btn>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── SCREEN 2: INVENTARIO ─────────────────────────────────────────────────────
 function Inventario() {
-  const { customInv = [], inventoryLoading = false } = useApp() || {};
-  const [riskFilter, setRiskFilter]       = useState('all');
-  const [categoryTab, setCategoryTab]     = useState('all');
-  const [searchQuery, setSearchQuery]     = useState('');
+  const { inventoryLoading = false } = useApp() || {};
+  const [items, setItems]         = useState([]);   // raw DB rows
+  const [loading, setLoading]     = useState(true);
+  const [riskFilter, setRiskFilter]   = useState('all');
+  const [categoryTab, setCategoryTab] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [toast, setToast]         = useState(null);
-  const [showImport, setShowImport] = useState(false);
-  const [consumptionModal, setConsumptionModal] = useState(null);
-  const [customConsumption, setCustomConsumption] = useState({});
-  const allItems = [...customInv];
-
-  const RISK_FILTERS = [{ id:'all',label:'TODOS' },{ id:'critical',label:'EN RIESGO' },{ id:'medium',label:'PREVENTIVO' },{ id:'stable',label:'ESTABLE' }];
-
-  const CATEGORY_KEYWORDS = {
-    destilados: ['ginebra', 'vodka', 'ron', 'whisky', 'tequila', 'mezcal', 'brandy', 'cognac', 'destilado', 'licor', 'vermut', 'amaro', 'bitter', 'aperitivo', 'espumoso', 'vino', 'cava', 'champagne', 'cerveza'],
-    frutas: ['fruta', 'fresco', 'fresca', 'zumo', 'jugo', 'cítrico', 'hierba', 'flor', 'vegetal', 'verdura'],
-    secos: ['seco', 'fruto seco', 'deshidratado', 'especia', 'semilla', 'hoja seca', 'polvo natural'],
-    texturizantes: ['texturizante', 'químico', 'gelificante', 'emulsionante', 'esferificación', 'agar', 'lecitina', 'xantana', 'metil'],
-    mixers: ['mixer', 'tónica', 'soda', 'ginger', 'agua', 'refresco', 'sirope', 'jarabe', 'azúcar']
-  };
-
-  const getCategory = (cat) => {
-    if (!cat) return 'otros';
-    const lower = cat.toLowerCase();
-    for (const [key, words] of Object.entries(CATEGORY_KEYWORDS)) {
-      if (words.some(w => lower.includes(w))) return key;
-    }
-    return 'otros';
-  };
+  const [showImport, setShowImport]   = useState(false);
+  const [drawerItem, setDrawerItem]   = useState(null);
 
   const CATEGORY_TABS = [
     { id:'all', label:'TODOS' },
@@ -1256,157 +1575,259 @@ function Inventario() {
     { id:'secos', label:'SECOS' },
     { id:'texturizantes', label:'TEXTURIZANTES' },
     { id:'mixers', label:'MIXERS' },
-    { id:'otros', label:'OTROS' }
+    { id:'otros', label:'OTROS' },
+  ];
+  const RISK_FILTERS = [
+    { id:'all', label:'TODOS' },
+    { id:'critical', label:'CRITICO' },
+    { id:'preventivo', label:'PREVENTIVO' },
+    { id:'stable', label:'ESTABLE' },
   ];
 
-  let visible = allItems;
-
-  if (searchQuery.trim()) {
-    const query = searchQuery.toLowerCase();
-    visible = visible.filter(i =>
-      i.name.toLowerCase().includes(query) ||
-      (i.cat && i.cat.toLowerCase().includes(query))
-    );
-  } else {
-    if (categoryTab !== 'all') {
-      visible = visible.filter(i => getCategory(i.cat) === categoryTab);
-    }
-  }
-
-  if (riskFilter !== 'all') {
-    visible = visible.filter(i => i.risk === riskFilter);
-  }
-
-  const saveConsumption = (itemId, weekly) => {
-    setCustomConsumption(p=>({...p,[itemId]:weekly}));
-    setToast(`Consumo de ${allItems.find(x=>x.id===itemId)?.name} actualizado a ${weekly}/semana`);
+  const fetchItems = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.from('productos').select('*').eq('local_id', INV_LOCAL_ID).order('nombre');
+      if (error) throw error;
+      setItems(data || []);
+    } catch(e) { setToast('Error cargando inventario: '+e.message); }
+    finally { setLoading(false); }
   };
-  if (inventoryLoading) {
-    return (
-      <div style={{ flex:1, padding:'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
-        <div style={{ color:C.teal, fontSize:'14px', letterSpacing:'2px' }}>CARGANDO INVENTARIO...</div>
-      </div>
-    );
+
+  useEffect(() => { fetchItems(); }, []);
+
+  // stats
+  const totalRefs   = items.length;
+  const criticos    = items.filter(p => parseFloat(p.stock_actual||0) <= parseFloat(p.stock_minimo||0) && parseFloat(p.stock_minimo||0)>0).length;
+  const valorTotal  = items.reduce((s,p) => s + (parseFloat(p.stock_actual||0)*parseFloat(p.coste_unitario||0)), 0);
+
+  const getCatGroup = (cat) => {
+    if (!cat) return 'otros';
+    const l = cat.toLowerCase();
+    if (['ginebra','vodka','ron','whisky','tequila','mezcal','brandy','cognac','destilado','licor','vermut','amaro','bitter','aperitivo','espumoso','vino','cava','champagne','cerveza'].some(w=>l.includes(w))) return 'destilados';
+    if (['fruta','fresco','fresca','zumo','jugo','citrico','hierba','flor','vegetal'].some(w=>l.includes(w))) return 'frutas';
+    if (['seco','fruto seco','deshidratado','especia','semilla','polvo'].some(w=>l.includes(w))) return 'secos';
+    if (['texturizante','gelificante','emulsionante','agar','lecitina','xantana'].some(w=>l.includes(w))) return 'texturizantes';
+    if (['mixer','tonica','soda','ginger','agua','refresco','sirope','jarabe','azucar'].some(w=>l.includes(w))) return 'mixers';
+    return 'otros';
+  };
+
+  const getEstado = (p) => {
+    const s = parseFloat(p.stock_actual||0), m = parseFloat(p.stock_minimo||0);
+    if (m===0) return 'stable';
+    if (s<=m)   return 'critical';
+    if (s<=m*1.5) return 'preventivo';
+    return 'stable';
+  };
+
+  const fmtDate = (d) => {
+    if (!d) return null;
+    const dt = new Date(d);
+    const diff = Math.floor((Date.now()-dt)/86400000);
+    if (diff>30) return { text: dt.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'2-digit'}), warn:true };
+    return { text: dt.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'2-digit'}), warn:false };
+  };
+
+  let visible = items;
+  if (searchQuery.trim()) {
+    const q = searchQuery.toLowerCase();
+    visible = visible.filter(i => (i.nombre||'').toLowerCase().includes(q) || (i.categoria||'').toLowerCase().includes(q));
+  } else if (categoryTab !== 'all') {
+    visible = visible.filter(i => getCatGroup(i.categoria) === categoryTab);
+  }
+  if (riskFilter !== 'all') {
+    visible = visible.filter(i => getEstado(i) === riskFilter);
   }
 
-  if (customInv.length === 0) {
-    return (
-      <div style={{ flex:1, padding:'28px 32px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:F }}>
-        {showImport&&<ImportModal onClose={()=>setShowImport(false)}/>}
-        <Package size={48} color={C.textSec} style={{ marginBottom: 16 }} />
-        <h2 style={{ color:C.text, fontSize:'20px', letterSpacing:'2px', marginBottom:8 }}>INVENTARIO VACÍO</h2>
-        <p style={{ color:C.textSec, fontSize:'13px', marginBottom:24 }}>No hay productos registrados en la base de datos.</p>
-        <Btn variant="primary" onClick={()=>setShowImport(true)} sx={{ padding:'12px 24px', fontSize:'11px', letterSpacing:'2px' }}>
-          IMPORTAR INVENTARIO INICIAL
-        </Btn>
-      </div>
-    );
-  }
+  // Update single item stock in local state
+  const handleStockSaved = (id, newStock) => {
+    setItems(prev => prev.map(p => p.id===id ? {...p, stock_actual:newStock} : p));
+  };
+
+  // Update full item after drawer save
+  const handleDrawerSaved = (id, payload) => {
+    setItems(prev => prev.map(p => p.id===id ? {...p, ...payload} : p));
+  };
+
+  const handlePedir = (p) => {
+    const tel = p.telefono_proveedor;
+    const msg = encodeURIComponent(`Hola, necesito reponer ${p.nombre}. Stock actual: ${p.stock_actual} ${p.unidad}.`);
+    if (tel) { window.open(`https://wa.me/${tel.replace(/\s+/g,'')}?text=${msg}`, '_blank'); }
+    else { navigator.clipboard?.writeText(decodeURIComponent(msg)); setToast('Mensaje copiado al portapapeles'); }
+  };
+
+  if (loading || inventoryLoading) return (
+    <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
+      <div style={{ color:C.teal, fontSize:'14px', letterSpacing:'2px' }}>CARGANDO INVENTARIO...</div>
+    </div>
+  );
+
+  if (items.length === 0) return (
+    <div style={{ flex:1, padding:'28px 32px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:F }}>
+      {showImport && <ImportModal onClose={()=>setShowImport(false)}/>}
+      <Package size={48} color={C.textSec} style={{ marginBottom:16 }}/>
+      <h2 style={{ color:C.text, fontSize:'20px', letterSpacing:'2px', marginBottom:8 }}>INVENTARIO VACIO</h2>
+      <p style={{ color:C.textSec, fontSize:'13px', marginBottom:24 }}>No hay productos registrados en la base de datos.</p>
+      <Btn onClick={()=>setShowImport(true)} sx={{ padding:'12px 24px', fontSize:'11px', letterSpacing:'2px' }}>IMPORTAR INVENTARIO INICIAL</Btn>
+    </div>
+  );
+
+  const TH = { padding:'10px 14px', textAlign:'left', fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700, fontFamily:F, whiteSpace:'nowrap' };
 
   return (
-    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
-      {toast&&<Toast msg={toast} onClose={()=>setToast(null)}/>}
-      {showImport&&<ImportModal onClose={()=>setShowImport(false)}/>}
-      {consumptionModal&&<ConsumptionModal item={consumptionModal} onClose={()=>setConsumptionModal(null)} onSave={(weekly)=>saveConsumption(consumptionModal.id,weekly)}/>}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
+    <div style={{ flex:1, padding:'24px 28px', overflowY:'auto', fontFamily:F }}>
+      {toast    && <Toast msg={toast} onClose={()=>setToast(null)}/>}
+      {showImport && <ImportModal onClose={()=>setShowImport(false)}/>}
+      <ProductDrawer item={drawerItem} isOpen={!!drawerItem} onClose={()=>setDrawerItem(null)} onSaved={handleDrawerSaved} setToast={setToast}/>
+
+      {/* Header */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:20 }}>
         <div>
           <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INVENTARIO INTELIGENTE</h1>
-          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
-            Predicción de stock con IA — {allItems.length} referencias monitorizadas
+          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, margin:'6px 0 0', display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+            <span>{totalRefs} referencias</span>
+            <span style={{ color:criticos>0?C.red:C.textSec, fontWeight:criticos>0?700:400 }}>· {criticos} criticos</span>
+            <span>· €{valorTotal.toFixed(0)} en stock</span>
           </p>
         </div>
         <Btn variant="outline" onClick={()=>setShowImport(true)} sx={{ padding:'9px 18px', fontSize:'10px', letterSpacing:'2px' }}>
-          IMPORTAR ALMACÉN
+          IMPORTAR ALMACEN
         </Btn>
       </div>
+
+      {/* Search */}
       <input
-        type="text"
-        placeholder="Buscar producto..."
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        style={{
-          width:'100%', padding:'10px 14px', marginBottom:18, borderRadius:4, fontFamily:F, fontSize:'13px',
-          background:C.cardAlt, border:`1px solid ${C.border2}`, color:C.text, outline:'none',
-          transition:'all 0.2s'
-        }}
-        onFocus={(e) => e.target.style.borderColor = C.orange}
-        onBlur={(e) => e.target.style.borderColor = C.border2}
+        type="text" placeholder="Buscar producto..." value={searchQuery}
+        onChange={e=>setSearchQuery(e.target.value)}
+        style={{ width:'100%', padding:'10px 14px', marginBottom:14, borderRadius:4, fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, color:C.text, outline:'none' }}
+        onFocus={e=>e.target.style.borderColor=C.orange}
+        onBlur={e=>e.target.style.borderColor=C.border2}
       />
 
-      <div style={{ display:'flex', gap:8, marginBottom:18, overflowX:'auto', paddingBottom:4 }}>
-        {CATEGORY_TABS.map(tab=>(
-          <button key={tab.id} onClick={()=>setCategoryTab(tab.id)} style={{
-            padding:'6px 16px', borderRadius:2, fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap',
-            background:categoryTab===tab.id?C.orange:C.cardAlt, color:categoryTab===tab.id?'#000':C.textSec,
-            border:categoryTab===tab.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`, transition:'all 0.12s',
-          }}>{tab.label}</button>
+      {/* Category tabs */}
+      <div style={{ display:'flex', gap:6, marginBottom:12, overflowX:'auto', paddingBottom:4 }}>
+        {CATEGORY_TABS.map(t=>(
+          <button key={t.id} onClick={()=>setCategoryTab(t.id)} style={{
+            padding:'5px 14px', borderRadius:2, fontFamily:F, fontSize:'9px', letterSpacing:'2px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap',
+            background:categoryTab===t.id?C.orange:C.cardAlt, color:categoryTab===t.id?'#000':C.textSec,
+            border:categoryTab===t.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`,
+          }}>{t.label}</button>
         ))}
       </div>
 
-      <div style={{ display:'flex', gap:8, marginBottom:18 }}>
+      {/* Risk filters */}
+      <div style={{ display:'flex', gap:6, marginBottom:16 }}>
         {RISK_FILTERS.map(f=>(
           <button key={f.id} onClick={()=>setRiskFilter(f.id)} style={{
-            padding:'6px 16px', borderRadius:2, fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700, cursor:'pointer',
+            padding:'5px 14px', borderRadius:2, fontFamily:F, fontSize:'9px', letterSpacing:'2px', fontWeight:700, cursor:'pointer',
             background:riskFilter===f.id?C.orange:C.cardAlt, color:riskFilter===f.id?'#000':C.textSec,
-            border:riskFilter===f.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`, transition:'all 0.12s',
+            border:riskFilter===f.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`,
           }}>{f.label}</button>
         ))}
       </div>
-      {visible.length === 0 && searchQuery.trim() ? (
-        <Card sx={{ marginBottom:22, padding:32, textAlign:'center' }}>
-          <p style={{ color:C.textSec, fontSize:'13px', letterSpacing:'1px' }}>
-            Sin resultados para "<strong style={{ color:C.text }}>{searchQuery}</strong>"
-          </p>
-        </Card>
+
+      {/* Table */}
+      {visible.length===0 ? (
+        <div style={{ padding:40, textAlign:'center', fontFamily:F, fontSize:'13px', color:C.textSec }}>
+          Sin resultados para "{searchQuery || riskFilter}"
+        </div>
       ) : (
-        <Card sx={{ marginBottom:22, overflow:'hidden' }}>
-          <table style={{ width:'100%', borderCollapse:'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom:`1px solid ${C.border2}`, background:C.cardAlt }}>
-                {['PRODUCTO','CATEGORÍA','STOCK ACTUAL','USO SEMANAL','DÍAS RESTANTES','COSTE/USO','ACCIÓN'].map(h=>(
-                  <th key={h} style={{ padding:'12px 16px', textAlign:'left', fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((item,i)=>{
-                const displayWeekly = customConsumption[item.id] || item.weekly;
-                return (
-                <tr key={item.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
-                  <td style={{ padding:'13px 16px', fontSize:'13px', color:C.text, fontWeight:700 }}>{item.name}</td>
-                  <td style={{ padding:'13px 16px', fontSize:'11px', color:C.textSec }}>{item.cat}</td>
-                  <td style={{ padding:'13px 16px', fontSize:'13px', color:C.text }}>{item.stock}</td>
-                  <td style={{ padding:'13px 16px' }}>
-                    <div style={{ fontSize:'12px', color:customConsumption[item.id]?C.teal:C.textSec, fontWeight:customConsumption[item.id]?700:400 }}>
-                      {displayWeekly}
-                    </div>
-                    <button onClick={()=>setConsumptionModal(item)} style={{ marginTop:4, fontSize:'9px', color:C.amber, background:'none', border:'none', cursor:'pointer', letterSpacing:'1px', textDecoration:'underline' }}>
-                      Editar
-                    </button>
-                  </td>
-                  <td style={{ padding:'13px 16px' }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                      <StockBar pct={item.pct}/>
-                      <span style={{ fontFamily:F, fontSize:'12px', fontWeight:700, color:item.days<=3?'#EF4444':item.days<=7?C.amber:C.teal }}>{item.days}d</span>
-                    </div>
-                  </td>
-                  <td style={{ padding:'13px 16px', fontSize:'12px', color:C.teal }}>{item.cost}</td>
-                  <td style={{ padding:'13px 16px' }}>
-                    <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                      <RiskBadge risk={item.risk}/>
-                      {item.risk!=='stable'&&<Btn variant="outline" sx={{ padding:'4px 10px', fontSize:'9px' }} onClick={()=>setToast(`Pedido de ${item.name} añadido a la lista`)}>PEDIR</Btn>}
-                    </div>
-                  </td>
+        <div style={{ background:C.card, border:`1px solid ${C.border2}`, borderRadius:4, overflow:'hidden' }}>
+          <div style={{ overflowX:'auto' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', minWidth:780 }}>
+              <thead>
+                <tr style={{ background:'#0D0D0D', position:'sticky', top:0, zIndex:10 }}>
+                  <th style={{...TH, width:'28%'}}>PRODUCTO</th>
+                  <th style={{...TH, width:'14%'}}>STOCK</th>
+                  <th style={{...TH, width:'11%'}}>ESTADO</th>
+                  <th style={{...TH, width:'9%'}}>MINIMO</th>
+                  <th style={{...TH, width:'11%'}}>COSTE</th>
+                  <th style={{...TH, width:'11%'}}>ULT. REPOSICION</th>
+                  <th style={{...TH, width:'16%'}}>ACCION</th>
                 </tr>
-              );
-              })}
-            </tbody>
-          </table>
-        </Card>
+              </thead>
+              <tbody>
+                {visible.map((p,i) => {
+                  const estado   = getEstado(p);
+                  const repDate  = fmtDate(p.ultima_reposicion);
+                  const valStock = (parseFloat(p.stock_actual||0)*parseFloat(p.coste_unitario||0)).toFixed(2);
+                  const esCrit   = estado==='critical' || estado==='preventivo';
+                  return (
+                    <tr key={p.id} style={{ borderBottom:`1px solid #1A1A1A`, background:i%2===0?'transparent':'#0D0D0D0A', minHeight:64 }}
+                      onMouseEnter={e=>{e.currentTarget.style.background='#161616';}}
+                      onMouseLeave={e=>{e.currentTarget.style.background=i%2===0?'transparent':'#0D0D0D0A';}}>
+
+                      {/* PRODUCTO */}
+                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                        <div style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:C.text }}>{p.nombre}</div>
+                        <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>{p.categoria||'—'}</div>
+                        {p.proveedor && (
+                          <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, marginTop:2, display:'flex', alignItems:'center', gap:4 }}>
+                            <span style={{ fontSize:'8px' }}>▲</span>{p.proveedor}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* STOCK */}
+                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                        <InlineStock item={p} onSaved={handleStockSaved} setToast={setToast}/>
+                        <StockMiniBar stock={p.stock_actual} minimo={p.stock_minimo}/>
+                      </td>
+
+                      {/* ESTADO */}
+                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                        <EstadoBadge stock={p.stock_actual} minimo={p.stock_minimo}/>
+                      </td>
+
+                      {/* MINIMO */}
+                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                        <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>MIN</div>
+                        <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec }}>{parseFloat(p.stock_minimo)||0} {p.unidad}</div>
+                      </td>
+
+                      {/* COSTE */}
+                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                        <div style={{ fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>€{parseFloat(p.coste_unitario||0).toFixed(2)}</div>
+                        <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>€{valStock} total</div>
+                      </td>
+
+                      {/* ULT. REPOSICION */}
+                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                        {repDate ? (
+                          <div style={{ fontFamily:F, fontSize:'11px', color:repDate.warn?C.amber:C.textSec }}>{repDate.text}</div>
+                        ) : (
+                          <div style={{ fontFamily:F, fontSize:'11px', color:'#444' }}>Sin datos</div>
+                        )}
+                      </td>
+
+                      {/* ACCION */}
+                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                        <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
+                          {esCrit && (
+                            <button onClick={()=>handlePedir(p)} style={{
+                              fontFamily:F, fontSize:'9px', letterSpacing:'1.5px', fontWeight:700,
+                              padding:'4px 10px', borderRadius:2, cursor:'pointer',
+                              background:C.orange, color:'#000', border:'none',
+                            }}>PEDIR</button>
+                          )}
+                          <Btn variant="ghost" onClick={()=>setDrawerItem(p)} sx={{ padding:'4px 10px', fontSize:'9px' }}>
+                            EDITAR
+                          </Btn>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:16 }}>
+
+      {/* Bottom analytics cards */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:16, marginTop:24 }}>
         <Card accent={C.purple} sx={{ padding:20 }}>
-          <SLabel label="PREDICCIÓN ESTE FIN DE SEMANA" color={C.purple} icon={Zap}/>
+          <SLabel label="PREDICCION ESTE FIN DE SEMANA" color={C.purple} icon={Zap}/>
           {[["Gin Tonic Hendrick's","~52 uds"],["Aperol Spritz","~48 uds"],["Negroni","~38 uds"],["Mojito","~35 uds"],["Old Fashioned","~22 uds"]].map(([n,u],i)=>(
             <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'7px 0', borderBottom:`1px solid ${C.border}`, fontSize:'12px' }}>
               <span style={{ color:C.textSec }}>#{i+1} {n}</span>
@@ -1415,17 +1836,16 @@ function Inventario() {
           ))}
         </Card>
         <Card accent={C.amber} sx={{ padding:20 }}>
-          <SLabel label="COSTE TEÓRICO VS REAL" color={C.amber} icon={TrendingUp}/>
-          {[['Coste teórico ventas','€4.280',C.textSec],['Coste real registrado','€4.990',C.amber],['Diferencia (merma)','+€710','#EF4444'],['Porcentaje de merma','14.2%','#EF4444'],['Objetivo BarOps','< 8%',C.teal]].map(([l,v,co],i)=>(
+          <SLabel label="COSTE TEORICO VS REAL" color={C.amber} icon={TrendingUp}/>
+          {[['Coste teorico ventas','€4.280',C.textSec],['Coste real registrado','€4.990',C.amber],['Diferencia (merma)','+€710',C.red],['Porcentaje de merma','14.2%',C.red],['Objetivo BarOps','< 8%',C.teal]].map(([l,v,co],i)=>(
             <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'7px 0', borderBottom:`1px solid ${C.border}`, fontSize:'12px' }}>
-              <span style={{ color:C.textSec }}>{l}</span>
-              <span style={{ color:co, fontWeight:700 }}>{v}</span>
+              <span style={{ color:C.textSec }}>{l}</span><span style={{ color:co, fontWeight:700 }}>{v}</span>
             </div>
           ))}
         </Card>
         <Card accent={C.teal} sx={{ padding:20 }}>
           <SLabel label="PEDIDO RECOMENDADO IA" color={C.teal} icon={ShoppingCart}/>
-          {[["Aperol","6 botellas","HOY",'#EF4444'],["Campari","4 botellas","HOY",'#EF4444'],["Gin Hendrick's","3 botellas","MAÑANA",C.amber],["Limones frescos","3 kg","MAÑANA",C.amber],["Vermut Martini","2 botellas","ESTA SEM.",C.teal]].map(([n,q,u,co],i)=>(
+          {[["Aperol","6 botellas","HOY",C.red],["Campari","4 botellas","HOY",C.red],["Gin Hendrick's","3 botellas","MANANA",C.amber],["Limones frescos","3 kg","MANANA",C.amber],["Vermut Martini","2 botellas","ESTA SEM.",C.teal]].map(([n,q,u,co],i)=>(
             <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'6px 0', borderBottom:`1px solid ${C.border}`, fontSize:'12px' }}>
               <span style={{ color:C.text }}>{n}</span>
               <div style={{ display:'flex', gap:8, alignItems:'center' }}>
@@ -1434,14 +1854,13 @@ function Inventario() {
               </div>
             </div>
           ))}
-          <Btn variant="teal" sx={{ width:'100%', marginTop:14, justifyContent:'center', padding:'9px', letterSpacing:'2px', fontSize:'10px' }}>
-            GENERAR PEDIDO COMPLETO
-          </Btn>
+          <Btn variant="teal" sx={{ width:'100%', marginTop:14, justifyContent:'center', padding:'9px', letterSpacing:'2px', fontSize:'10px' }}>GENERAR PEDIDO COMPLETO</Btn>
         </Card>
       </div>
     </div>
   );
 }
+
 
 // ─── SCREEN 3: STAFFING REDISEÑADO ────────────────────────────────────────────
 function Staffing() {
