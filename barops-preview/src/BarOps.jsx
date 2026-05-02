@@ -813,9 +813,17 @@ function Dashboard({ onNavigate }) {
   const [data, setData] = useState({ products: [], cocktails: [], movements: [] });
   const [expandedAlerts, setExpandedAlerts] = useState(false);
   const [agentQuery, setAgentQuery] = useState('');
-  
+  const [isMobile, setIsMobile] = useState(false);
+
   const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
   const { localName } = useApp();
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const CHIPS = [
     '¿Cómo mejorar mi margen en Gin Tonics?',
@@ -964,11 +972,11 @@ function Dashboard({ onNavigate }) {
   }
 
   return (
-    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F, background:C.bg }}>
+    <div style={{ flex:1, padding:isMobile?'20px 16px':'28px 32px', overflowY:'auto', fontFamily:F, background:C.bg }}>
       {toast && <Toast msg={toast} onClose={()=>setToast(null)}/>}
 
       {/* SECCIÓN 1 — SALUDO INTELIGENTE */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', marginBottom:24 }}>
+      <div style={{ display:'flex', flexDirection:isMobile?'column':'row', justifyContent:'space-between', alignItems:isMobile?'flex-start':'flex-end', marginBottom:24, gap:isMobile?8:0 }}>
         <div>
           {loading ? (
             <>
@@ -977,20 +985,20 @@ function Dashboard({ onNavigate }) {
             </>
           ) : (
             <>
-              <h1 style={{ margin:0, fontSize:'24px', fontWeight:700, color:C.text, letterSpacing:'-0.5px' }}>
+              <h1 style={{ margin:0, fontSize:isMobile?'20px':'24px', fontWeight:700, color:C.text, letterSpacing:'-0.5px' }}>
                 {greeting}, <span style={{ color:C.orange }}>{localName}</span>
               </h1>
-              <p style={{ margin:'8px 0 0', fontSize:'14px', color:statusMsg.color, fontWeight:500 }}>
+              <p style={{ margin:'8px 0 0', fontSize:isMobile?'12px':'14px', color:statusMsg.color, fontWeight:500 }}>
                 {statusMsg.text}
               </p>
             </>
           )}
         </div>
-        <div style={{ textAlign:'right' }}>
+        {!isMobile && <div style={{ textAlign:'right' }}>
           <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'2px', textTransform:'uppercase' }}>
             {new Date().toLocaleDateString('es-ES', { weekday:'long', day:'numeric', month:'long', year:'numeric' })}
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* SECCIÓN 2 — ALERTAS DEL DÍA */}
@@ -1026,7 +1034,7 @@ function Dashboard({ onNavigate }) {
       </div>
 
       {/* SECCIÓN 3 — 4 KPIs */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:20, marginBottom:32 }}>
+      <div style={{ display:'grid', gridTemplateColumns:isMobile?'repeat(2, 1fr)':'repeat(4, 1fr)', gap:isMobile?12:20, marginBottom:32 }}>
         {loading ? [1,2,3,4].map(i => <Skeleton key={i} height={120} />) : (
           <>
             <Card sx={{ padding:20, position:'relative', overflow:'hidden' }}>
@@ -1076,8 +1084,9 @@ function Dashboard({ onNavigate }) {
       <div style={{ marginBottom:32 }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
           <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, margin:0, fontWeight:700 }}>REQUIEREN ATENCIÓN</h2>
-          <Btn variant="ghost" onClick={()=>onNavigate('inventario')} sx={{ fontSize:'9px' }}>VER TODO EL INVENTARIO →</Btn>
+          {!isMobile && <Btn variant="ghost" onClick={()=>onNavigate('inventario')} sx={{ fontSize:'9px' }}>VER TODO EL INVENTARIO →</Btn>}
         </div>
+        {!isMobile ? (
         <Card sx={{ overflow:'hidden', maxHeight:'200px', overflowY:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse' }}>
             <thead>
@@ -1153,10 +1162,55 @@ function Dashboard({ onNavigate }) {
             </tbody>
           </table>
         </Card>
+        ) : (
+        <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:12 }}>
+          {loading ? [1,2,3].map(i => <Skeleton key={i} height={100} />) : (
+            (() => {
+              const items = data.products
+                .filter(p => parseFloat(p.stock_actual || 0) <= parseFloat(p.stock_minimo || 0) * 1.5)
+                .sort((a,b) => {
+                  const sA = parseFloat(a.stock_actual||0), sB = parseFloat(b.stock_actual||0);
+                  if (sA === 0) return -1; if (sB === 0) return 1;
+                  return sA - sB;
+                })
+                .slice(0, 8);
+
+              if (items.length === 0) return <Card sx={{ padding:32, textAlign:'center', color:C.teal, fontSize:'13px' }}>✓ Todos los productos en niveles correctos</Card>;
+
+              return items.map(p => {
+                const s = parseFloat(p.stock_actual||0);
+                const m = parseFloat(p.stock_minimo||0);
+                const isZero = s === 0;
+                const isCrit = s <= m;
+                return (
+                  <Card key={p.id} sx={{ padding:16, display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, background:isZero ? '#FF000606' : isCrit ? '#FF6B3506' : '#F59E0B04' }}>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:'12px', color:isZero?C.red:'#999', fontWeight:600 }}>{p.nombre}</div>
+                      <div style={{ fontSize:'10px', color:C.textSec, marginTop:4 }}>{p.categoria}</div>
+                      <div style={{ fontSize:'10px', color:C.textSec, marginTop:2 }}>{s} {p.unit || p.unidad} · Stock min: {m}</div>
+                      <Badge label={isZero?'SIN STOCK':isCrit?'CRÍTICO':'PREVENTIVO'} color={isCrit?C.red:C.amber} bg={isCrit?C.redBg:C.amberBg} style={{ marginTop:8 }} />
+                    </div>
+                    <Btn variant="ghost" onClick={() => {
+                      if (p.telefono_proveedor) {
+                        const msg = encodeURIComponent(`Hola, necesito reponer ${p.nombre}...`);
+                        window.open(`https://wa.me/${p.telefono_proveedor.replace(/\s+/g,'')}?text=${msg}`, '_blank');
+                      } else {
+                        onNavigate('inventario');
+                      }
+                    }} sx={{ fontSize:'9px', padding:'6px 12px', whiteSpace:'nowrap' }}>
+                      {p.proveedor ? 'PEDIR' : 'GESTIONAR'}
+                    </Btn>
+                  </Card>
+                );
+              });
+            })()
+          )}
+        </div>
+        )}
       </div>
 
       {/* SECCIÓN 5 — DOS PANELES EN COLUMNAS */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:24, marginBottom:32 }}>
+      <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:isMobile?16:24, marginBottom:32 }}>
         {/* COLUMNA IZQUIERDA — ESTADO DE LA CARTA */}
         <div>
           <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, marginBottom:16, fontWeight:700 }}>CARTA</h2>
@@ -1243,33 +1297,42 @@ function Dashboard({ onNavigate }) {
 
       {/* SECCIÓN 6 — ACCESO RÁPIDO AL AGENTE */}
       <div style={{ marginBottom:40 }}>
-        <Card sx={{ padding:24, borderLeft:`2px solid ${C.orange}` }}>
+        <Card sx={{ padding:isMobile?16:24, borderLeft:`2px solid ${C.orange}` }}>
           <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
             <span style={{ fontSize:'11px', fontWeight:700, letterSpacing:'2px', color:C.textSec }}>AGENTE BAROPS</span>
             <Badge label="IA" color={C.orange} bg={C.orangeBg} />
           </div>
-          <div style={{ display:'flex', gap:12, marginBottom:16 }}>
-            <input 
-              style={{ 
-                flex:1, background:C.cardAlt, border:`1px solid ${C.border2}`, 
-                borderRadius:4, padding:'12px 16px', color:C.text, fontFamily:F, outline:'none'
+          <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?8:12, marginBottom:16 }}>
+            <input
+              style={{
+                flex:1, background:C.cardAlt, border:`1px solid ${C.border2}`,
+                borderRadius:4, padding:'12px 16px', color:C.text, fontFamily:F, outline:'none', fontSize:isMobile?'14px':'inherit'
               }}
-              placeholder="Pregunta algo sobre tu negocio..."
+              placeholder="Pregunta algo..."
               value={agentQuery}
               onChange={e=>setAgentQuery(e.target.value)}
               onKeyDown={e=>e.key==='Enter' && handleAgentSubmit()}
             />
-            <button 
+            <button
               onClick={()=>handleAgentSubmit()}
-              style={{ 
-                width:48, background:C.orange, border:'none', borderRadius:4, 
-                cursor:'pointer', color:'#000', display:'flex', alignItems:'center', justifyContent:'center' 
+              style={{
+                width:isMobile?'100%':48, height:isMobile?48:48, background:C.orange, border:'none', borderRadius:4,
+                cursor:'pointer', color:'#000', display:'flex', alignItems:'center', justifyContent:'center'
               }}>
               <Send size={18} />
             </button>
           </div>
-          <div style={{ display:'flex', gap:8 }}>
-            {CHIPS.map(c => (
+          <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+            {isMobile ? CHIPS.slice(0, 2).map(c => (
+              <button key={c} onClick={()=>handleAgentSubmit(c)} style={{
+                background:'transparent', border:`1px solid ${C.border2}`, borderRadius:20,
+                padding:'6px 12px', fontSize:'10px', color:C.textSec, cursor:'pointer',
+                transition:'all 0.2s', fontFamily:F, flex:isMobile?1:'initial'
+              }} onMouseEnter={e=>{e.target.style.borderColor=C.orange; e.target.style.color=C.orange;}}
+                 onMouseLeave={e=>{e.target.style.borderColor=C.border2; e.target.style.color=C.textSec;}}>
+                "{c}"
+              </button>
+            )) : CHIPS.map(c => (
               <button key={c} onClick={()=>handleAgentSubmit(c)} style={{
                 background:'transparent', border:`1px solid ${C.border2}`, borderRadius:20,
                 padding:'6px 16px', fontSize:'11px', color:C.textSec, cursor:'pointer',
