@@ -5484,6 +5484,9 @@ export default function BarOps() {
   return (
     <AppCtx.Provider value={ctx}>
       <div style={{ display:'flex', flexDirection:isMobile?'column':'row', width:'100%', height:'100vh', background:C.bg, overflow:'hidden', fontFamily:F }}>
+        <div style={{ position:'fixed', top:0, right:0, zIndex:9999, background:'red', color:'white', padding:'10px', fontSize:'12px' }}>
+          Mobile: {isMobile.toString()} | Width: {typeof window !== 'undefined' ? window.innerWidth : 'N/A'}
+        </div>
         <style>{`
           *{box-sizing:border-box;}
           html,body,#root{margin:0;padding:0;width:100%;height:100%;}
