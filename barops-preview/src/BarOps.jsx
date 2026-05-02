@@ -1074,14 +1074,14 @@ function Dashboard({ onNavigate }) {
           <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, margin:0, fontWeight:700 }}>REQUIEREN ATENCIÓN</h2>
           <Btn variant="ghost" onClick={()=>onNavigate('inventario')} sx={{ fontSize:'9px' }}>VER TODO EL INVENTARIO →</Btn>
         </div>
-        <Card sx={{ overflow:'hidden' }}>
+        <Card sx={{ overflow:'hidden', maxHeight:'200px', overflowY:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse' }}>
             <thead>
               <tr style={{ background:'#0D0D0D', borderBottom:`1px solid ${C.border}` }}>
-                <th style={{ textAlign:'left', padding:'12px 20px', fontSize:'9px', color:C.textSec, letterSpacing:'2px' }}>PRODUCTO</th>
-                <th style={{ textAlign:'left', padding:'12px 20px', fontSize:'9px', color:C.textSec, letterSpacing:'2px' }}>STOCK</th>
-                <th style={{ textAlign:'left', padding:'12px 20px', fontSize:'9px', color:C.textSec, letterSpacing:'2px' }}>ESTADO</th>
-                <th style={{ textAlign:'right', padding:'12px 20px', fontSize:'9px', color:C.textSec, letterSpacing:'2px' }}>ACCIÓN</th>
+                <th style={{ textAlign:'left', padding:'10px 16px', fontSize:'8px', color:'#555555', letterSpacing:'1px' }}>PRODUCTO</th>
+                <th style={{ textAlign:'left', padding:'10px 16px', fontSize:'8px', color:'#555555', letterSpacing:'1px' }}>STOCK</th>
+                <th style={{ textAlign:'left', padding:'10px 16px', fontSize:'8px', color:'#555555', letterSpacing:'1px' }}>ESTADO</th>
+                <th style={{ textAlign:'right', padding:'10px 16px', fontSize:'8px', color:'#555555', letterSpacing:'1px' }}>ACCIÓN</th>
               </tr>
             </thead>
             <tbody>
@@ -1112,24 +1112,24 @@ function Dashboard({ onNavigate }) {
                       <tr key={p.id} style={{ background:bg, borderBottom:`1px solid ${C.border}`, transition:'background 0.2s' }}
                         onMouseEnter={e=>e.currentTarget.style.background='#1A1A1A'}
                         onMouseLeave={e=>e.currentTarget.style.background=bg}>
-                        <td style={{ padding:'12px 20px' }}>
-                          <div style={{ color:isZero?C.red:C.text, fontSize:'13px', fontWeight:600 }}>{p.nombre}</div>
-                          <div style={{ color:C.textSec, fontSize:'10px', marginTop:2 }}>{p.categoria}</div>
+                        <td style={{ padding:'10px 16px' }}>
+                          <div style={{ color:isZero?C.red:'#666666', fontSize:'11px', fontWeight:400 }}>{p.nombre}</div>
+                          <div style={{ color:'#555555', fontSize:'9px', marginTop:2 }}>{p.categoria}</div>
                         </td>
-                        <td style={{ padding:'12px 20px' }}>
-                          <div style={{ fontSize:'13px', color:C.text }}>{s} {p.unit || p.unidad}</div>
+                        <td style={{ padding:'10px 16px' }}>
+                          <div style={{ fontSize:'11px', color:'#666666' }}>{s} {p.unit || p.unidad}</div>
                           <div style={{ width:60, height:3, background:'#222', marginTop:4, borderRadius:2 }}>
                             <div style={{ width:`${Math.min(100, (s/(m||1))*50)}%`, height:'100%', background:isCrit?C.red:C.amber }} />
                           </div>
                         </td>
-                        <td style={{ padding:'12px 20px' }}>
-                          <Badge 
-                            label={isZero?'SIN STOCK':isCrit?'CRÍTICO':'PREVENTIVO'} 
-                            color={isCrit?C.red:C.amber} 
-                            bg={isCrit?C.redBg:C.amberBg} 
+                        <td style={{ padding:'10px 16px' }}>
+                          <Badge
+                            label={isZero?'SIN STOCK':isCrit?'CRÍTICO':'PREVENTIVO'}
+                            color={isCrit?C.red:C.amber}
+                            bg={isCrit?C.redBg:C.amberBg}
                           />
                         </td>
-                        <td style={{ padding:'12px 20px', textAlign:'right' }}>
+                        <td style={{ padding:'10px 16px', textAlign:'right' }}>
                           <Btn variant="ghost" onClick={() => {
                             if (p.telefono_proveedor) {
                               const msg = encodeURIComponent(`Hola, necesito reponer ${p.nombre}...`);
@@ -1137,7 +1137,7 @@ function Dashboard({ onNavigate }) {
                             } else {
                               onNavigate('inventario');
                             }
-                          }} sx={{ fontSize:'9px', padding:'4px 10px' }}>
+                          }} sx={{ fontSize:'8px', padding:'4px 10px' }}>
                             {p.proveedor ? 'PEDIR' : 'GESTIONAR'}
                           </Btn>
                         </td>
