@@ -972,7 +972,7 @@ function Dashboard({ onNavigate }) {
   }
 
   return (
-    <div style={{ flex:1, padding:isMobile?'20px 16px':'28px 32px', overflowY:'auto', fontFamily:F, background:C.bg }}>
+    <div style={{ flex:1, padding:isMobile?'20px 16px':'28px 32px', overflowY:'auto', overflowX:'hidden', fontFamily:F, background:C.bg, width:'100%' }}>
       {toast && <Toast msg={toast} onClose={()=>setToast(null)}/>}
 
       {/* SECCIÓN 1 — SALUDO INTELIGENTE */}
@@ -1002,12 +1002,12 @@ function Dashboard({ onNavigate }) {
       </div>
 
       {/* SECCIÓN 2 — ALERTAS DEL DÍA */}
-      <div style={{ marginBottom:32 }}>
+      <div style={{ marginBottom:32, width:'100%' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
           <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, margin:0, fontWeight:700 }}>ACCIONES DE HOY ({alerts.length})</h2>
         </div>
-        <Card sx={{ overflow:'hidden', maxHeight:'200px', overflowY:'auto' }}>
-          <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
+        <Card sx={{ overflow:'hidden', maxHeight:'200px', overflowY:'auto', overflowX:'auto', width:'100%', boxSizing:'border-box' }}>
+          <div style={{ display:'flex', flexDirection:'column', gap:0, width:'100%' }}>
             {loading ? [1,2,3].map(i => <Skeleton key={i} height={50} />) : (
               visibleAlerts.map((a, i) => (
                 <div key={i} style={{
@@ -1034,7 +1034,7 @@ function Dashboard({ onNavigate }) {
       </div>
 
       {/* SECCIÓN 3 — 4 KPIs */}
-      <div style={{ display:'grid', gridTemplateColumns:isMobile?'repeat(2, 1fr)':'repeat(4, 1fr)', gap:isMobile?12:20, marginBottom:32 }}>
+      <div style={{ display:'grid', gridTemplateColumns:isMobile?'repeat(2, 1fr)':'repeat(4, 1fr)', gap:isMobile?12:20, marginBottom:32, width:'100%' }}>
         {loading ? [1,2,3,4].map(i => <Skeleton key={i} height={120} />) : (
           <>
             <Card sx={{ padding:20, position:'relative', overflow:'hidden' }}>
@@ -1081,14 +1081,15 @@ function Dashboard({ onNavigate }) {
       </div>
 
       {/* SECCIÓN 4 — INVENTARIO URGENTE */}
-      <div style={{ marginBottom:32 }}>
+      <div style={{ marginBottom:32, width:'100%' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
           <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, margin:0, fontWeight:700 }}>REQUIEREN ATENCIÓN</h2>
           {!isMobile && <Btn variant="ghost" onClick={()=>onNavigate('inventario')} sx={{ fontSize:'9px' }}>VER TODO EL INVENTARIO →</Btn>}
         </div>
         {!isMobile ? (
-        <Card sx={{ overflow:'hidden', maxHeight:'200px', overflowY:'auto' }}>
-          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+        <Card sx={{ overflow:'hidden', maxHeight:'200px', overflowY:'auto', overflowX:'auto', width:'100%', boxSizing:'border-box' }}>
+          <div style={{ overflowX:'auto', overflowY:'hidden', width:'100%' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse', minWidth:'600px' }}>
             <thead>
               <tr style={{ background:'#0D0D0D', borderBottom:`1px solid ${C.border}` }}>
                 <th style={{ textAlign:'left', padding:'10px 16px', fontSize:'8px', color:'#555555', letterSpacing:'1px' }}>PRODUCTO</th>
@@ -1161,9 +1162,10 @@ function Dashboard({ onNavigate }) {
               )}
             </tbody>
           </table>
+          </div>
         </Card>
         ) : (
-        <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:12 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:12, width:'100%' }}>
           {loading ? [1,2,3].map(i => <Skeleton key={i} height={100} />) : (
             (() => {
               const items = data.products
@@ -1175,7 +1177,7 @@ function Dashboard({ onNavigate }) {
                 })
                 .slice(0, 8);
 
-              if (items.length === 0) return <Card sx={{ padding:32, textAlign:'center', color:C.teal, fontSize:'13px' }}>✓ Todos los productos en niveles correctos</Card>;
+              if (items.length === 0) return <Card sx={{ padding:32, textAlign:'center', color:C.teal, fontSize:'13px', width:'100%', boxSizing:'border-box' }}>✓ Todos los productos en niveles correctos</Card>;
 
               return items.map(p => {
                 const s = parseFloat(p.stock_actual||0);
@@ -1183,7 +1185,7 @@ function Dashboard({ onNavigate }) {
                 const isZero = s === 0;
                 const isCrit = s <= m;
                 return (
-                  <Card key={p.id} sx={{ padding:16, display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, background:isZero ? '#FF000606' : isCrit ? '#FF6B3506' : '#F59E0B04' }}>
+                  <Card key={p.id} sx={{ padding:16, display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, background:isZero ? '#FF000606' : isCrit ? '#FF6B3506' : '#F59E0B04', width:'100%', boxSizing:'border-box' }}>
                     <div style={{ flex:1 }}>
                       <div style={{ fontSize:'12px', color:isZero?C.red:'#999', fontWeight:600 }}>{p.nombre}</div>
                       <div style={{ fontSize:'10px', color:C.textSec, marginTop:4 }}>{p.categoria}</div>
@@ -1210,11 +1212,11 @@ function Dashboard({ onNavigate }) {
       </div>
 
       {/* SECCIÓN 5 — DOS PANELES EN COLUMNAS */}
-      <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:isMobile?16:24, marginBottom:32 }}>
+      <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:isMobile?16:24, marginBottom:32, width:'100%' }}>
         {/* COLUMNA IZQUIERDA — ESTADO DE LA CARTA */}
-        <div>
+        <div style={{ width:'100%' }}>
           <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, marginBottom:16, fontWeight:700 }}>CARTA</h2>
-          <Card sx={{ padding:24, height:'100%' }}>
+          <Card sx={{ padding:24, height:'100%', width:'100%', boxSizing:'border-box' }}>
             {loading ? <Skeleton height={150}/> : data.cocktails.length === 0 ? (
               <div style={{ textAlign:'center', padding:20 }}>
                 <div style={{ color:C.textSec, fontSize:'12px', marginBottom:16 }}>Sin cócteles en carta</div>
@@ -1296,19 +1298,19 @@ function Dashboard({ onNavigate }) {
       </div>
 
       {/* SECCIÓN 6 — ACCESO RÁPIDO AL AGENTE */}
-      <div style={{ marginBottom:40 }}>
-        <Card sx={{ padding:isMobile?16:24, borderLeft:`2px solid ${C.orange}` }}>
+      <div style={{ marginBottom:40, width:'100%' }}>
+        <Card sx={{ padding:isMobile?16:24, borderLeft:`2px solid ${C.orange}`, width:'100%', boxSizing:'border-box' }}>
           <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
             <span style={{ fontSize:'11px', fontWeight:700, letterSpacing:'2px', color:C.textSec }}>AGENTE BAROPS</span>
             <Badge label="IA" color={C.orange} bg={C.orangeBg} />
           </div>
-          <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?8:12, marginBottom:16 }}>
+          <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?8:12, marginBottom:16, width:'100%' }}>
             <input
               style={{
                 flex:1, background:C.cardAlt, border:`1px solid ${C.border2}`,
-                borderRadius:4, padding:'12px 16px', color:C.text, fontFamily:F, outline:'none', fontSize:isMobile?'14px':'inherit'
+                borderRadius:4, padding:'12px 14px', color:C.text, fontFamily:F, outline:'none', fontSize:isMobile?'14px':'inherit', minWidth:0, boxSizing:'border-box'
               }}
-              placeholder="Pregunta algo..."
+              placeholder={isMobile?'Pregunta...':'Pregunta algo...'}
               value={agentQuery}
               onChange={e=>setAgentQuery(e.target.value)}
               onKeyDown={e=>e.key==='Enter' && handleAgentSubmit()}
@@ -1316,21 +1318,21 @@ function Dashboard({ onNavigate }) {
             <button
               onClick={()=>handleAgentSubmit()}
               style={{
-                width:isMobile?'100%':48, height:isMobile?48:48, background:C.orange, border:'none', borderRadius:4,
-                cursor:'pointer', color:'#000', display:'flex', alignItems:'center', justifyContent:'center'
+                width:isMobile?'100%':48, height:48, background:C.orange, border:'none', borderRadius:4,
+                cursor:'pointer', color:'#000', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0
               }}>
               <Send size={18} />
             </button>
           </div>
-          <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+          <div style={{ display:'flex', flexDirection:isMobile?'column':'row', flexWrap:isMobile?'nowrap':'wrap', gap:isMobile?8:8, overflowX:isMobile?'hidden':'visible', overflowY:'hidden', width:'100%' }}>
             {isMobile ? CHIPS.slice(0, 2).map(c => (
               <button key={c} onClick={()=>handleAgentSubmit(c)} style={{
                 background:'transparent', border:`1px solid ${C.border2}`, borderRadius:20,
-                padding:'6px 12px', fontSize:'10px', color:C.textSec, cursor:'pointer',
-                transition:'all 0.2s', fontFamily:F, flex:isMobile?1:'initial'
+                padding:'6px 10px', fontSize:'9px', color:C.textSec, cursor:'pointer',
+                transition:'all 0.2s', fontFamily:F, whiteSpace:'nowrap', textOverflow:'ellipsis', overflow:'hidden', minWidth:0, flex:0.9
               }} onMouseEnter={e=>{e.target.style.borderColor=C.orange; e.target.style.color=C.orange;}}
                  onMouseLeave={e=>{e.target.style.borderColor=C.border2; e.target.style.color=C.textSec;}}>
-                "{c}"
+                "{c.substring(0,30)}..."
               </button>
             )) : CHIPS.map(c => (
               <button key={c} onClick={()=>handleAgentSubmit(c)} style={{
@@ -2776,6 +2778,13 @@ function Staffing() {
 
 // ─── SCREEN 4: AGENTE IA — CONECTADO A CLAUDE ─────────────────────────────────
 function AgenteIA() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [messages, setMessages] = useState(INITIAL_CHAT);
   const [input, setInput]       = useState('');
   const [loading, setLoading]   = useState(false);
@@ -2812,23 +2821,23 @@ function AgenteIA() {
   return (
     <div style={{ flex:1, display:'flex', flexDirection:'column', fontFamily:F, overflow:'hidden' }}>
       {/* Header */}
-      <div style={{ padding:'20px 28px', borderBottom:`1px solid ${C.border2}`, display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:14 }}>
-          <div style={{ width:38, height:38, borderRadius:4, background:`${C.orange}18`, border:`1px solid ${C.orange}44`, display:'flex', alignItems:'center', justifyContent:'center' }}>
-            <Bot size={18} color={C.orange}/>
+      <div style={{ padding:isMobile?'16px 12px':'20px 28px', borderBottom:`1px solid ${C.border2}`, display:'flex', flexDirection:isMobile?'column':'row', justifyContent:'space-between', alignItems:isMobile?'flex-start':'center', flexShrink:0, gap:isMobile?12:0 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:isMobile?10:14 }}>
+          <div style={{ width:isMobile?32:38, height:isMobile?32:38, borderRadius:4, background:`${C.orange}18`, border:`1px solid ${C.orange}44`, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+            <Bot size={isMobile?16:18} color={C.orange}/>
           </div>
           <div>
-            <div style={{ fontFamily:F, fontSize:'15px', fontWeight:700, color:C.orange, letterSpacing:'4px' }}>AGENTE BAROPS</div>
-            <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, marginTop:2 }}>Tu analista de negocio personal — activo 24/7</div>
+            <div style={{ fontFamily:F, fontSize:isMobile?'12px':'15px', fontWeight:700, color:C.orange, letterSpacing:'4px' }}>AGENTE BAROPS</div>
+            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2, display:isMobile?'none':'block' }}>Tu analista de negocio personal — activo 24/7</div>
           </div>
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <span style={{ padding:'5px 12px', background:C.purpleBg, border:`1px solid ${C.purple}44`, borderRadius:2, fontFamily:F, fontSize:'9px', color:C.purple, letterSpacing:'1.5px', fontWeight:700 }}>
-            CLAUDE AI POWERED
+        <div style={{ display:'flex', alignItems:'center', gap:isMobile?8:12 }}>
+          <span style={{ padding:'5px 12px', background:C.purpleBg, border:`1px solid ${C.purple}44`, borderRadius:2, fontFamily:F, fontSize:'8px', color:C.purple, letterSpacing:'1.5px', fontWeight:700 }}>
+            CLAUDE POWERED
           </span>
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <div style={{ width:7, height:7, borderRadius:'50%', background:loading?C.amber:C.teal, boxShadow:`0 0 8px ${loading?C.amber:C.teal}` }}/>
-            <span style={{ fontFamily:F, fontSize:'10px', color:loading?C.amber:C.teal, letterSpacing:'1.5px' }}>
+            <span style={{ fontFamily:F, fontSize:'9px', color:loading?C.amber:C.teal, letterSpacing:'1.5px', whiteSpace:'nowrap' }}>
               {loading?'PROCESANDO':'EN LÍNEA'}
             </span>
           </div>
@@ -2846,28 +2855,28 @@ function AgenteIA() {
       )}
 
       {/* Messages */}
-      <div style={{ flex:1, overflowY:'auto', padding:'24px 32px', display:'flex', flexDirection:'column', gap:18 }}>
+      <div style={{ flex:1, overflowY:'auto', padding:isMobile?'16px 12px':'24px 32px', display:'flex', flexDirection:'column', gap:isMobile?12:18 }}>
         {messages.map(msg=>(
-          <div key={msg.id} style={{ display:'flex', flexDirection:'column', alignSelf:msg.role==='user'?'flex-end':'flex-start', maxWidth:'72%' }}>
-            <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:5, padding:'0 4px', textAlign:msg.role==='user'?'right':'left' }}>
-              {msg.role==='user'?'TÚ':'⚡ AGENTE BAROPS'} · {msg.time}
+          <div key={msg.id} style={{ display:'flex', flexDirection:'column', alignSelf:msg.role==='user'?'flex-end':'flex-start', maxWidth:isMobile?'85%':'72%' }}>
+            <div style={{ fontFamily:F, fontSize:'8px', color:C.textSec, letterSpacing:'1px', marginBottom:5, padding:'0 4px', textAlign:msg.role==='user'?'right':'left' }}>
+              {msg.role==='user'?'TÚ':'⚡ AGENTE'} · {msg.time}
             </div>
             <div style={{
-              padding:'14px 18px',
+              padding:isMobile?'12px 14px':'14px 18px',
               background:msg.role==='user'?C.orangeBg:C.card,
               border:`1px solid ${msg.role==='user'?C.orange+'44':C.border2}`,
               borderRadius:msg.role==='user'?'8px 2px 8px 8px':'2px 8px 8px 8px',
             }}>
-              <pre style={{ margin:0, fontFamily:F, fontSize:'13px', color:C.text, lineHeight:'1.7', whiteSpace:'pre-wrap', wordBreak:'break-word' }}>
+              <pre style={{ margin:0, fontFamily:F, fontSize:isMobile?'12px':'13px', color:C.text, lineHeight:'1.7', whiteSpace:'pre-wrap', wordBreak:'break-word' }}>
                 {msg.text}
               </pre>
             </div>
           </div>
         ))}
         {loading&&(
-          <div style={{ display:'flex', flexDirection:'column', alignSelf:'flex-start', maxWidth:'72%' }}>
-            <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:5 }}>⚡ AGENTE BAROPS · {getNow()}</div>
-            <div style={{ padding:'14px 18px', background:C.card, border:`1px solid ${C.border2}`, borderRadius:'2px 8px 8px 8px' }}>
+          <div style={{ display:'flex', flexDirection:'column', alignSelf:'flex-start', maxWidth:isMobile?'85%':'72%' }}>
+            <div style={{ fontFamily:F, fontSize:'8px', color:C.textSec, letterSpacing:'1px', marginBottom:5 }}>⚡ AGENTE · {getNow()}</div>
+            <div style={{ padding:isMobile?'12px 14px':'14px 18px', background:C.card, border:`1px solid ${C.border2}`, borderRadius:'2px 8px 8px 8px' }}>
               <TypingDots/>
             </div>
           </div>
@@ -2876,25 +2885,27 @@ function AgenteIA() {
       </div>
 
       {/* Input */}
-      <div style={{ padding:'16px 32px 24px', borderTop:`1px solid ${C.border2}`, flexShrink:0 }}>
-        <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
-          {CHIPS.map((chip,i)=>(
-            <button key={i} onClick={()=>send(chip)} style={{ padding:'5px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'12px', color:C.textSec, cursor:'pointer' }}>
-              {chip}
-            </button>
-          ))}
-        </div>
-        <div style={{ display:'flex', gap:10 }}>
+      <div style={{ padding:isMobile?'12px 12px 16px':'16px 32px 24px', borderTop:`1px solid ${C.border2}`, flexShrink:0, paddingBottom:isMobile?'16px':undefined, safeAreaInsetBottom:isMobile?'auto':undefined }}>
+        {!isMobile&&(
+          <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
+            {CHIPS.map((chip,i)=>(
+              <button key={i} onClick={()=>send(chip)} style={{ padding:'5px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'12px', color:C.textSec, cursor:'pointer' }}>
+                {chip}
+              </button>
+            ))}
+          </div>
+        )}
+        <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?8:10 }}>
           <input
             value={input}
             onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&send()}
             disabled={loading}
-            placeholder="Pregunta lo que necesites sobre tu negocio..."
-            style={{ flex:1, padding:'12px 16px', background:C.card, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', opacity:loading?.6:1 }}
+            placeholder={isMobile?'Pregunta...':'Pregunta lo que necesites sobre tu negocio...'}
+            style={{ flex:1, padding:isMobile?'12px 14px':'12px 16px', background:C.card, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:isMobile?'14px':'13px', color:C.text, outline:'none', opacity:loading?.6:1 }}
           />
-          <Btn onClick={()=>send()} disabled={loading} sx={{ padding:'12px 24px', fontSize:'11px' }}>
-            <Send size={14}/> ENVIAR
+          <Btn onClick={()=>send()} disabled={loading} sx={{ padding:isMobile?'12px 20px':'12px 24px', fontSize:'11px', width:isMobile?'100%':'auto', justifyContent:'center' }}>
+            <Send size={isMobile?13:14}/> {isMobile?'ENVIAR':'ENVIAR'}
           </Btn>
         </div>
       </div>
@@ -2908,6 +2919,13 @@ const TT_STYLE = { background:C.card, border:`1px solid #333`, fontFamily:F, fon
 
 // ─── SCREEN 5: ANALYTICS ──────────────────────────────────────────────────────
 function Analytics() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [loading, setLoading] = useState(true);
   const [categoryData, setCategoryData] = useState([]);
   const [topProducts, setTopProducts] = useState([]);
@@ -2959,83 +2977,111 @@ function Analytics() {
 
   if (loading) {
     return (
-      <div style={{ flex:1, padding:'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
+      <div style={{ flex:1, padding:isMobile?'28px 16px':'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
         <div style={{ color:C.teal, fontSize:'14px', letterSpacing:'2px' }}>CARGANDO...</div>
       </div>
     );
   }
 
   return (
-    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
-      <div style={{ marginBottom:28 }}>
-        <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INTELIGENCIA DE NEGOCIO</h1>
-        <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Análisis de rendimiento — Paradiso Cocktail Bar</p>
+    <div style={{ flex:1, padding:isMobile?'20px 16px':'28px 32px', overflowY:'auto', overflowX:'hidden', fontFamily:F, width:'100%' }}>
+      <div style={{ marginBottom:isMobile?20:28 }}>
+        <h1 style={{ fontFamily:F, fontSize:isMobile?'16px':'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INTELIGENCIA DE NEGOCIO</h1>
+        <p style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Análisis de rendimiento</p>
       </div>
-      
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:18, marginBottom:22 }}>
-        <Card sx={{ padding:20 }}>
+
+      <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:isMobile?14:18, marginBottom:22 }}>
+        <Card sx={{ padding:isMobile?16:20 }}>
           <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>DISTRIBUCIÓN POR CATEGORÍA</div>
           {categoryData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={210}>
+            <ResponsiveContainer width="100%" height={isMobile?160:210}>
               <BarChart data={categoryData}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.border2}/>
-                <XAxis dataKey="n" stroke={C.border2} tick={{ fontFamily:F, fontSize:9, fill:C.textSec }}/>
-                <YAxis stroke={C.border2} tick={{ fontFamily:F, fontSize:10, fill:C.textSec }}/>
+                <XAxis dataKey="n" stroke={C.border2} tick={{ fontFamily:F, fontSize:isMobile?8:9, fill:C.textSec }}/>
+                <YAxis stroke={C.border2} tick={{ fontFamily:F, fontSize:isMobile?9:10, fill:C.textSec }}/>
                 <Tooltip contentStyle={TT_STYLE} labelStyle={{ color:C.text }}/>
                 <Bar dataKey="v" fill={C.purple} radius={[2,2,0,0]}/>
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <div style={{ height:210, display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec }}>Sin datos</div>
+            <div style={{ height:isMobile?160:210, display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec }}>Sin datos</div>
           )}
         </Card>
 
-        <Card sx={{ padding:20 }}>
+        <Card sx={{ padding:isMobile?16:20 }}>
           <div style={{ fontSize:'10px', color:C.teal, letterSpacing:'2.5px', fontWeight:700, marginBottom:12 }}>TOP 10 PRODUCTOS POR VALOR</div>
           {topProducts.length > 0 ? (
-            <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight:210, overflowY:'auto' }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight:isMobile?160:210, overflowY:'auto' }}>
               {topProducts.map((p,i) => (
-                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:`1px solid ${C.border2}`, fontSize:'11px' }}>
+                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:`1px solid ${C.border2}`, fontSize:isMobile?'10px':'11px' }}>
                   <div style={{ flex:1 }}>
                     <div style={{ color:C.text, fontWeight:700 }}>#{i+1} {p.nombre}</div>
                     <div style={{ color:C.textSec, fontSize:'9px' }}>{p.categoria || '-'}</div>
                   </div>
-                  <div style={{ color:C.teal, fontWeight:700, textAlign:'right' }}>€{p.value.toFixed(2)}</div>
+                  <div style={{ color:C.teal, fontWeight:700, textAlign:'right', fontSize:isMobile?'10px':'11px' }}>€{p.value.toFixed(2)}</div>
                 </div>
               ))}
             </div>
           ) : (
-            <div style={{ height:210, display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec }}>Sin productos con valor</div>
+            <div style={{ height:isMobile?160:210, display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec }}>Sin productos con valor</div>
           )}
         </Card>
       </div>
 
-      <Card sx={{ padding:20 }}>
+      <Card sx={{ padding:isMobile?16:20 }}>
         <div style={{ fontSize:'10px', color:C.red, letterSpacing:'2.5px', fontWeight:700, marginBottom:16 }}>⚠ PRODUCTOS EN RIESGO</div>
         {riskProducts.length > 0 ? (
-          <table style={{ width:'100%', borderCollapse:'collapse' }}>
-            <thead>
-              <tr style={{ background:C.cardAlt, borderBottom:`1px solid ${C.border2}` }}>
-                {['PRODUCTO','CATEGORÍA','STOCK ACTUAL','STOCK MÍNIMO','DIFERENCIA'].map(h=>(
-                  <th key={h} style={{ padding:'11px 12px', textAlign:'left', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
+          isMobile ? (
+            <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:12, maxHeight:400, overflowY:'auto' }}>
               {riskProducts.map((p,i) => {
                 const diff = parseFloat(p.stock_actual || 0) - parseFloat(p.stock_minimo || 0);
                 return (
-                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
-                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>{p.nombre}</td>
-                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'11px', color:C.textSec }}>{p.categoria || '-'}</td>
-                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.stock_actual} {p.unidad}</td>
-                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.stock_minimo} {p.unidad}</td>
-                    <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', fontWeight:700, color:diff < -5 ? '#EF4444' : C.orange }}>{diff} {p.unidad}</td>
-                  </tr>
+                  <div key={i} style={{ padding:12, background:C.cardAlt, borderRadius:4, borderLeft:`3px solid ${diff < -5 ? '#EF4444' : C.orange}` }}>
+                    <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:8 }}>{p.nombre}</div>
+                    <div style={{ fontSize:'10px', color:C.textSec, marginBottom:6 }}>{p.categoria || '-'}</div>
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, fontSize:'11px' }}>
+                      <div>
+                        <div style={{ color:C.textSec, fontSize:'9px', marginBottom:2 }}>ACTUAL</div>
+                        <div style={{ color:C.text, fontWeight:700 }}>{p.stock_actual} {p.unidad}</div>
+                      </div>
+                      <div>
+                        <div style={{ color:C.textSec, fontSize:'9px', marginBottom:2 }}>MÍNIMO</div>
+                        <div style={{ color:C.text, fontWeight:700 }}>{p.stock_minimo} {p.unidad}</div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${C.border2}` }}>
+                      <div style={{ color:C.textSec, fontSize:'9px', marginBottom:2 }}>DIFERENCIA</div>
+                      <div style={{ fontSize:'12px', fontWeight:700, color:diff < -5 ? '#EF4444' : C.orange }}>{diff} {p.unidad}</div>
+                    </div>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
+            </div>
+          ) : (
+            <table style={{ width:'100%', borderCollapse:'collapse' }}>
+              <thead>
+                <tr style={{ background:C.cardAlt, borderBottom:`1px solid ${C.border2}` }}>
+                  {['PRODUCTO','CATEGORÍA','STOCK ACTUAL','STOCK MÍNIMO','DIFERENCIA'].map(h=>(
+                    <th key={h} style={{ padding:'11px 12px', textAlign:'left', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {riskProducts.map((p,i) => {
+                  const diff = parseFloat(p.stock_actual || 0) - parseFloat(p.stock_minimo || 0);
+                  return (
+                    <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
+                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>{p.nombre}</td>
+                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'11px', color:C.textSec }}>{p.categoria || '-'}</td>
+                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.stock_actual} {p.unidad}</td>
+                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.stock_minimo} {p.unidad}</td>
+                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', fontWeight:700, color:diff < -5 ? '#EF4444' : C.orange }}>{diff} {p.unidad}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )
         ) : (
           <div style={{ padding:'32px 0', textAlign:'center', color:C.teal, fontFamily:F }}>✓ Todos los productos en niveles correctos</div>
         )}
@@ -3626,6 +3672,13 @@ function Carta() {
   const allIngs = [...INGREDIENTS_DB, ...customIngs];
   const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
 
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [tab, setTab]                   = useState('clasicos');
   const [cocteles, setCocteles]         = useState([]);
   const [loading, setLoading]           = useState(false);
@@ -3829,22 +3882,22 @@ function Carta() {
   const openForm = () => { setShowForm(true); };
 
   return (
-    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
+    <div style={{ flex:1, padding:isMobile?'20px 16px':'28px 32px', overflowY:'auto', overflowX:'hidden', fontFamily:F, width:'100%' }}>
       {toast&&<Toast msg={toast} onClose={()=>setToast(null)}/>}
 
       {/* Header */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
+      <div style={{ display:'flex', flexDirection:isMobile?'column':'row', justifyContent:'space-between', alignItems:isMobile?'flex-start':'flex-start', marginBottom:24, gap:isMobile?16:0 }}>
         <div>
-          <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>CARTA & COSTES</h1>
-          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
-            {counts.clasicos + counts.autor} activos · Gestión completa de cócteles en Supabase
+          <h1 style={{ fontFamily:F, fontSize:isMobile?'16px':'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>CARTA & COSTES</h1>
+          <p style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
+            {counts.clasicos + counts.autor} activos · Gestión completa
           </p>
         </div>
-        <div style={{ display:'flex', gap:10 }}>
-          <Btn variant="outline" onClick={() => setShowImportCocteles(true)} sx={{ padding:'10px 16px', fontSize:'10px' }}>
+        <div style={{ display:'flex', gap:isMobile?8:10, flexWrap:isMobile?'wrap':'nowrap', width:isMobile?'100%':'auto' }}>
+          <Btn variant="outline" onClick={() => setShowImportCocteles(true)} sx={{ padding:'10px 16px', fontSize:'10px', flex:isMobile?1:0 }}>
             📥 IMPORTAR CSV
           </Btn>
-          <Btn onClick={openForm} sx={{ padding:'10px 20px', fontSize:'11px' }}>
+          <Btn onClick={openForm} sx={{ padding:'10px 20px', fontSize:'11px', flex:isMobile?1:0 }}>
             <Plus size={14}/> NUEVO CÓCTEL
           </Btn>
         </div>
@@ -3944,7 +3997,7 @@ function Carta() {
       )}
 
       {/* Tabs */}
-      <div style={{ display:'flex', borderBottom:`1px solid ${C.border2}`, marginBottom:22, overflowX:'auto' }}>
+      <div style={{ display:'flex', flexWrap:isMobile?'wrap':'nowrap', borderBottom:`1px solid ${C.border2}`, marginBottom:22, overflowX:isMobile?'visible':'auto', gap:isMobile?0:undefined }}>
         {[
           ['clasicos', `CLÁSICOS (${counts.clasicos})`],
           ['autor', `DE AUTOR (${counts.autor})`],
@@ -3954,10 +4007,10 @@ function Carta() {
           ['retirados', `RETIRADOS (${counts.retirados})`],
         ].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
-            padding:'10px 20px', background:'transparent', cursor:'pointer',
-            fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700, whiteSpace:'nowrap',
+            padding:isMobile?'8px 12px':'10px 20px', background:'transparent', cursor:'pointer',
+            fontFamily:F, fontSize:isMobile?'9px':'10px', letterSpacing:'2px', fontWeight:700, whiteSpace:isMobile?'normal':'nowrap',
             color:tab===id?C.orange:C.textSec, border:'none',
-            borderBottom:tab===id?`2px solid ${C.orange}`:'2px solid transparent', marginBottom:'-1px',
+            borderBottom:tab===id?`2px solid ${C.orange}`:'2px solid transparent', marginBottom:'-1px', flex:isMobile?1:0, textAlign:'center',
           }}>{label}</button>
         ))}
       </div>
@@ -3972,7 +4025,7 @@ function Carta() {
       {/* Grid */}
       {!loading && (
         visibles.length > 0 ? (
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14 }}>
+          <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'repeat(4,1fr)', gap:isMobile?12:14 }}>
             {visibles.map(c=>(
               <CocktailCard
                 key={c.id}
@@ -3984,7 +4037,7 @@ function Carta() {
             ))}
           </div>
         ) : (
-          <div style={{ textAlign:'center', padding:'64px 20px' }}>
+          <div style={{ textAlign:'center', padding:isMobile?'48px 20px':'64px 20px' }}>
             <div style={{ fontFamily:F, fontSize:'40px', color:C.border2, marginBottom:20 }}>◇</div>
             <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>
               {tab==='borradores'?'TODAVÍA NO HAY BORRADORES':'NO HAY CÓCTELES EN ESTA CATEGORÍA'}
@@ -4000,17 +4053,17 @@ function Carta() {
 
       {/* New/Edit Form Modal */}
       {showForm && (
-            <Card accent={C.orange} sx={{ padding:24, marginBottom:24 }}>
+            <Card accent={C.orange} sx={{ padding:isMobile?16:24, marginBottom:24 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
                 <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>NUEVO CÓCTEL</span>
                 <button onClick={resetForm} style={{ background:'none',border:'none',cursor:'pointer',color:C.textSec,display:'flex' }}><X size={16}/></button>
               </div>
 
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 300px', gap:24 }}>
+              <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 300px', gap:isMobile?16:24 }}>
 
                 {/* Left: fields */}
                 <div>
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginBottom:14 }}>
+                  <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr', gap:12, marginBottom:14 }}>
                     <div>
                       <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>TIPO *</div>
                       <select value={form.tipo} onChange={e=>setForm(f=>({...f,tipo:e.target.value}))}
@@ -4091,13 +4144,13 @@ function Carta() {
                   )}
 
                   {/* Add ingredient row */}
-                  <div style={{ display:'flex', gap:8, alignItems:'flex-end', position:'relative' }}>
+                  <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:8, alignItems:isMobile?'stretch':'flex-end', position:'relative' }}>
                     <div style={{ flex:1, position:'relative' }}>
                       <input
                         value={ingSearch}
                         onChange={e=>{ setIngSearch(e.target.value); setNewIng(p=>({...p,id:''})); }}
                         placeholder="🔍 Busca (escribe: lim, gin, etc)..."
-                        style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                        style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:isMobile?'14px':'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
                       />
                       {ingSearch.trim()&&filtered.length>0&&(
                         <div style={{ position:'absolute', top:'100%', left:0, right:0, background:C.card, border:`1px solid ${C.border2}`, borderTop:'none', borderRadius:'0 0 3px 3px', maxHeight:200, overflowY:'auto', zIndex:10 }}>
@@ -4110,43 +4163,45 @@ function Carta() {
                         </div>
                       )}
                     </div>
-                    <div style={{ width:76, flexShrink:0 }}>
+                    <div style={{ width:isMobile?'100%':76, flexShrink:0 }}>
                       <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CANTIDAD</div>
                       <input value={newIng.qty} onChange={e=>setNewIng(p=>({...p,qty:e.target.value}))}
                         onKeyDown={e=>e.key==='Enter'&&addIng()}
                         placeholder="cl / ud" type="number" step="0.5" min="0"
-                        style={{ width:'100%', padding:'9px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none' }}
+                        style={{ width:'100%', padding:'9px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:isMobile?'14px':'12px', color:C.text, outline:'none' }}
                       />
                     </div>
-                    <Btn variant="outline" onClick={addIng} sx={{ padding:'9px 14px', flexShrink:0, alignSelf:'flex-end' }}>
+                    <Btn variant="outline" onClick={addIng} sx={{ padding:'9px 14px', flexShrink:0, alignSelf:isMobile?'auto':'flex-end', width:isMobile?'100%':'auto' }}>
                       <Plus size={13}/> ADD
                     </Btn>
                   </div>
                 </div>
 
                 {/* Right: live preview */}
-                <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                <div style={{ display:'flex', flexDirection:'column', gap:12, order:isMobile?2:0 }}>
                   {photoPreview && (
                     <Card sx={{ padding:0, overflow:'hidden' }}>
-                      <img src={photoPreview} alt="Preview" style={{ width:'100%', height:'200px', objectFit:'cover' }}/>
+                      <img src={photoPreview} alt="Preview" style={{ width:'100%', height:isMobile?'180px':'200px', objectFit:'cover' }}/>
                     </Card>
                   )}
-                  <Card accent={mc} sx={{ padding:20, flex:1 }}>
+                  <Card accent={mc} sx={{ padding:isMobile?16:20, flex:1 }}>
                     <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:16 }}>PREVIEW EN TIEMPO REAL</div>
 
-                    <div style={{ marginBottom:14 }}>
-                      <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>COSTE TOTAL</div>
-                      <div style={{ fontSize:'30px', color:C.orange, fontWeight:700, lineHeight:1 }}>€{liveCost.toFixed(2)}</div>
-                    </div>
-                    <div style={{ marginBottom:14 }}>
-                      <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>PRECIO VENTA</div>
-                      <div style={{ fontSize:'30px', color:C.text, fontWeight:700, lineHeight:1 }}>
-                        {livePrice>0?`€${livePrice.toFixed(2)}`:'—'}
+                    <div style={{ marginBottom:14, display:'grid', gridTemplateColumns:isMobile?'1fr 1fr':'1fr', gap:isMobile?12:0 }}>
+                      <div>
+                        <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>COSTE TOTAL</div>
+                        <div style={{ fontSize:isMobile?'24px':'30px', color:C.orange, fontWeight:700, lineHeight:1 }}>€{liveCost.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>PRECIO VENTA</div>
+                        <div style={{ fontSize:isMobile?'24px':'30px', color:C.text, fontWeight:700, lineHeight:1 }}>
+                          {livePrice>0?`€${livePrice.toFixed(2)}`:'—'}
+                        </div>
                       </div>
                     </div>
                     <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14 }}>
                       <div style={{ fontSize:'10px', color:C.textSec, marginBottom:6 }}>MARGEN REAL</div>
-                      <div style={{ fontSize:'38px', fontWeight:700, color:mc, lineHeight:1 }}>
+                      <div style={{ fontSize:isMobile?'32px':'38px', fontWeight:700, color:mc, lineHeight:1 }}>
                         {livePrice>0?`${liveMargin.toFixed(1)}%`:'—'}
                       </div>
                       {livePrice>0&&liveCost>0&&(
@@ -4167,7 +4222,7 @@ function Carta() {
                     </div>
                   </Card>
 
-                  <div style={{ display:'flex', gap:8 }}>
+                  <div style={{ display:'flex', gap:8, flexDirection:isMobile?'column':'row' }}>
                     <Btn variant="ghost" onClick={resetForm} sx={{ flex:1, justifyContent:'center' }}>CANCELAR</Btn>
                     <Btn
                       disabled={!form.name.trim()||!form.price||formIngs.length===0}
@@ -4187,6 +4242,13 @@ function Carta() {
 
 // ─── PRICING ──────────────────────────────────────────────────────────────────
 function Pricing() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [loading, setLoading] = useState(null); // 'monthly' | 'annual' | null
 
   const handleCheckout = async (priceId, plan) => {
@@ -4225,24 +4287,24 @@ function Pricing() {
   // const monthlyCoupon = import.meta.env.VITE_STRIPE_COUPON_MONTHLY || null;
 
   return (
-    <div style={{ flex:1, overflow:'auto', padding:'40px 60px' }}>
+    <div style={{ flex:1, overflowY:'auto', overflowX:'hidden', padding:isMobile?'28px 16px':'40px 60px', width:'100%' }}>
       <div style={{ maxWidth:1000, margin:'0 auto' }}>
-        <div style={{ textAlign:'center', marginBottom:60 }}>
-          <div style={{ fontFamily:F, fontSize:'36px', fontWeight:700, color:C.text, marginBottom:12 }}>PLANES BAROPS PRO</div>
-          <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, lineHeight:'1.6' }}>
+        <div style={{ textAlign:'center', marginBottom:isMobile?40:60 }}>
+          <div style={{ fontFamily:F, fontSize:isMobile?'24px':'36px', fontWeight:700, color:C.text, marginBottom:12 }}>PLANES BAROPS PRO</div>
+          <div style={{ fontFamily:F, fontSize:isMobile?'13px':'14px', color:C.textSec, lineHeight:'1.6' }}>
             Gestiona tu bar con datos en tiempo real. 14 dias de prueba gratis, sin compromiso.
           </div>
           {/* Promo banner — sin emojis */}
-          <div style={{ display:'inline-flex', alignItems:'center', gap:8, marginTop:18, padding:'8px 24px', background:`linear-gradient(90deg, ${C.orange}18, ${C.purple}18)`, border:`1px solid ${C.orange}44`, borderRadius:2 }}>
-            <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, fontWeight:700, letterSpacing:'1.5px' }}>
+          <div style={{ display:'inline-flex', alignItems:'center', gap:8, marginTop:18, padding:isMobile?'8px 16px':'8px 24px', background:`linear-gradient(90deg, ${C.orange}18, ${C.purple}18)`, border:`1px solid ${C.orange}44`, borderRadius:2, flexWrap:'wrap', justifyContent:'center' }}>
+            <span style={{ fontFamily:F, fontSize:isMobile?'10px':'11px', color:C.orange, fontWeight:700, letterSpacing:'1.5px' }}>
               OFERTA LANZAMIENTO · PRIMER TRIMESTRE AL 50% · SOLO POR TIEMPO LIMITADO
             </span>
           </div>
         </div>
 
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:40, marginBottom:80 }}>
+        <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:isMobile?24:40, marginBottom:isMobile?40:80 }}>
           {/* Monthly Plan */}
-          <Card accent={C.orange} sx={{ padding:40, position:'relative', overflow:'hidden' }}>
+          <Card accent={C.orange} sx={{ padding:isMobile?24:40, position:'relative', overflow:'hidden' }}>
             <div style={{ position:'absolute', top:-40, right:-40, width:120, height:120, background:C.orange, filter:'blur(60px)', opacity:0.07, pointerEvents:'none' }}/>
             {/* Badge oferta trimestre — sin emoji */}
             <div style={{ position:'absolute', top:20, right:20 }}>
@@ -4250,7 +4312,7 @@ function Pricing() {
             </div>
 
             <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>PLAN</div>
-            <div style={{ fontFamily:F, fontSize:'28px', fontWeight:700, color:C.text, marginBottom:12 }}>Mensual</div>
+            <div style={{ fontFamily:F, fontSize:isMobile?'22px':'28px', fontWeight:700, color:C.text, marginBottom:12 }}>Mensual</div>
 
             {/* Precio con oferta trimestral */}
             <div style={{ marginBottom:20 }}>
@@ -4287,7 +4349,7 @@ function Pricing() {
           </Card>
 
           {/* Annual Plan */}
-          <Card accent={C.teal} sx={{ padding:40, position:'relative', overflow:'hidden', background:`linear-gradient(145deg, #0f1a18 0%, ${C.card} 100%)` }}>
+          <Card accent={C.teal} sx={{ padding:isMobile?24:40, position:'relative', overflow:'hidden', background:`linear-gradient(145deg, #0f1a18 0%, ${C.card} 100%)` }}>
             <div style={{ position:'absolute', top:-40, right:-40, width:120, height:120, background:C.teal, filter:'blur(60px)', opacity:0.1, pointerEvents:'none' }}/>
             <div style={{ position:'absolute', top:20, right:20, display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6 }}>
               <Badge label='MAS POPULAR' color={C.teal} bg={C.tealBg}/>
@@ -4295,7 +4357,7 @@ function Pricing() {
             </div>
 
             <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>PLAN</div>
-            <div style={{ fontFamily:F, fontSize:'28px', fontWeight:700, color:C.text, marginBottom:12 }}>Anual</div>
+            <div style={{ fontFamily:F, fontSize:isMobile?'22px':'28px', fontWeight:700, color:C.text, marginBottom:12 }}>Anual</div>
 
             <div style={{ marginBottom:20 }}>
               <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:4 }}>
@@ -4444,6 +4506,13 @@ function PaymentSuccess() {
 
 // ─── SCREEN: LOCAL ────────────────────────────────────────────────────────────
 function Local({ localName, onLocalNameChange }) {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [formData, setFormData] = useState({ nombre:'', direccion:'', ciudad:'', aforo:'' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -4543,26 +4612,26 @@ function Local({ localName, onLocalNameChange }) {
 
   if (loading) {
     return (
-      <div style={{ flex:1, padding:'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
+      <div style={{ flex:1, padding:isMobile?'20px 16px':'28px 32px', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F }}>
         <div style={{ color:C.teal, fontSize:'14px', letterSpacing:'2px' }}>CARGANDO...</div>
       </div>
     );
   }
 
   return (
-    <div style={{ flex:1, padding:'28px 32px', overflowY:'auto', fontFamily:F }}>
+    <div style={{ flex:1, padding:isMobile?'20px 16px':'28px 32px', overflowY:'auto', overflowX:'hidden', fontFamily:F, width:'100%' }}>
       {toast && <Toast msg={toast} onClose={()=>setToast(null)}/>}
 
-      <div style={{ marginBottom:32 }}>
-        <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0, marginBottom:8 }}>CONFIGURACIÓN LOCAL</h1>
-        <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:0 }}>
+      <div style={{ marginBottom:isMobile?20:32 }}>
+        <h1 style={{ fontFamily:F, fontSize:isMobile?'16px':'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0, marginBottom:8 }}>CONFIGURACIÓN LOCAL</h1>
+        <p style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', margin:0 }}>
           Gestiona la información de tu establecimientos y preferencias del sistema
         </p>
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:24, marginBottom:32 }}>
-        <Card sx={{ padding:24 }}>
-          <h2 style={{ fontFamily:F, fontSize:'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px', marginBottom:18 }}>PERFIL DEL LOCAL</h2>
+      <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:isMobile?16:24, marginBottom:isMobile?20:32 }}>
+        <Card sx={{ padding:isMobile?16:24 }}>
+          <h2 style={{ fontFamily:F, fontSize:isMobile?'12px':'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px', marginBottom:isMobile?14:18 }}>PERFIL DEL LOCAL</h2>
           <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
             <div style={{ textAlign:'center' }}>
               <div style={{ width:80, height:80, borderRadius:8, background:C.cardAlt, border:`2px dashed ${C.border2}`, margin:'0 auto 12px', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
@@ -4594,39 +4663,39 @@ function Local({ localName, onLocalNameChange }) {
               </label>
             </div>
             <div>
-              <label style={{ display:'block', fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>NOMBRE</label>
+              <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>NOMBRE</label>
               <input
                 type="text"
                 value={formData.nombre}
                 onChange={(e) => setFormData(p=>({...p, nombre:e.target.value}))}
-                style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
+                style={{ width:'100%', padding:isMobile?'8px 10px':'10px 12px', fontFamily:F, fontSize:isMobile?'12px':'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
               />
             </div>
             <div>
-              <label style={{ display:'block', fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>DIRECCIÓN</label>
+              <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>DIRECCIÓN</label>
               <input
                 type="text"
                 value={formData.direccion}
                 onChange={(e) => setFormData(p=>({...p, direccion:e.target.value}))}
-                style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
+                style={{ width:'100%', padding:isMobile?'8px 10px':'10px 12px', fontFamily:F, fontSize:isMobile?'12px':'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
               />
             </div>
             <div>
-              <label style={{ display:'block', fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CIUDAD</label>
+              <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CIUDAD</label>
               <input
                 type="text"
                 value={formData.ciudad}
                 onChange={(e) => setFormData(p=>({...p, ciudad:e.target.value}))}
-                style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
+                style={{ width:'100%', padding:isMobile?'8px 10px':'10px 12px', fontFamily:F, fontSize:isMobile?'12px':'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
               />
             </div>
             <div>
-              <label style={{ display:'block', fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>AFORO</label>
+              <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>AFORO</label>
               <input
                 type="number"
                 value={formData.aforo}
                 onChange={(e) => setFormData(p=>({...p, aforo:parseInt(e.target.value) || 0}))}
-                style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
+                style={{ width:'100%', padding:isMobile?'8px 10px':'10px 12px', fontFamily:F, fontSize:isMobile?'12px':'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}
               />
             </div>
             <Btn
@@ -4639,9 +4708,9 @@ function Local({ localName, onLocalNameChange }) {
           </div>
         </Card>
 
-        <div style={{ display:'flex', flexDirection:'column', gap:24 }}>
-          <Card sx={{ padding:24 }}>
-            <h2 style={{ fontFamily:F, fontSize:'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px' }}>PLAN ACTUAL</h2>
+        <div style={{ display:'flex', flexDirection:'column', gap:isMobile?16:24 }}>
+          <Card sx={{ padding:isMobile?16:24 }}>
+            <h2 style={{ fontFamily:F, fontSize:isMobile?'12px':'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px', marginBottom:isMobile?14:18 }}>PLAN ACTUAL</h2>
             <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
               <div>
                 <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 }}>PLAN</div>
@@ -4658,8 +4727,8 @@ function Local({ localName, onLocalNameChange }) {
             </div>
           </Card>
 
-          <Card sx={{ padding:24 }}>
-            <h2 style={{ fontFamily:F, fontSize:'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px' }}>PREFERENCIAS</h2>
+          <Card sx={{ padding:isMobile?16:24 }}>
+            <h2 style={{ fontFamily:F, fontSize:isMobile?'12px':'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px', marginBottom:isMobile?14:18 }}>PREFERENCIAS</h2>
             <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
               {[
                 { key:'stockAlerts', label:'Alertas de stock crítico' },
@@ -5403,7 +5472,7 @@ export default function BarOps() {
 
   return (
     <AppCtx.Provider value={ctx}>
-      <div style={{ display:'flex', flexDirection:isMobile?'column':'row', width:'100vw', height:'100vh', background:C.bg, overflow:'hidden', fontFamily:F }}>
+      <div style={{ display:'flex', flexDirection:isMobile?'column':'row', width:'100%', height:'100vh', background:C.bg, overflow:'hidden', fontFamily:F }}>
         <style>{`
           *{box-sizing:border-box;}
           html,body,#root{margin:0;padding:0;width:100%;height:100%;}
