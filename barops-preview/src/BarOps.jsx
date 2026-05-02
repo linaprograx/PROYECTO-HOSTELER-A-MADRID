@@ -7,7 +7,7 @@ import {
 import {
   LayoutDashboard, Package, Users, Bot, BarChart2,
   AlertTriangle, CheckCircle, Clock, TrendingUp, TrendingDown,
-  Send, HelpCircle, Plus, Bell, X, Zap,
+  Send, HelpCircle, Plus, Bell, X, Zap, Search,
   ShoppingCart, ChevronDown, ChevronUp, UserCheck,
   BookOpen, Trash2, CreditCard, Store, Settings, Wine,
 } from 'lucide-react';
@@ -1758,68 +1758,126 @@ function Inventario() {
   const TH = { padding:'10px 14px', textAlign:'left', fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700, fontFamily:F, whiteSpace:'nowrap' };
 
   return (
-    <div style={{ flex:1, padding:'24px 28px', overflowY:'auto', fontFamily:F }}>
+    <div style={{ 
+      height: '100%', 
+      display: 'flex', 
+      flexDirection: 'column', 
+      padding: '24px 28px', 
+      fontFamily: F,
+      overflow: 'hidden' 
+    }}>
       {toast    && <Toast msg={toast} onClose={()=>setToast(null)}/>}
       {showImport && <ImportModal onClose={()=>setShowImport(false)}/>}
       <ProductDrawer item={drawerItem} isOpen={!!drawerItem} onClose={()=>setDrawerItem(null)} onSaved={handleDrawerSaved} setToast={setToast}/>
 
-      {/* Header */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:20 }}>
-        <div>
-          <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INVENTARIO INTELIGENTE</h1>
-          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, margin:'6px 0 0', display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-            <span>{totalRefs} referencias</span>
-            <span style={{ color:criticos>0?C.red:C.textSec, fontWeight:criticos>0?700:400 }}>· {criticos} criticos</span>
-            <span>· €{valorTotal.toFixed(0)} en stock</span>
-          </p>
+      {/* Header (Fixed) */}
+      <div style={{ flexShrink: 0, marginBottom: 20 }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+          <div>
+            <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INVENTARIO INTELIGENTE</h1>
+            <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, margin:'6px 0 0', display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+              <span>{totalRefs} referencias</span>
+              <span style={{ color:criticos>0?C.red:C.textSec, fontWeight:criticos>0?700:400 }}>· {criticos} criticos</span>
+              <span>· €{valorTotal.toFixed(0)} en stock</span>
+            </p>
+          </div>
+          <Btn variant="outline" onClick={()=>setShowImport(true)} sx={{ padding:'9px 18px', fontSize:'10px', letterSpacing:'2px' }}>
+            IMPORTAR ALMACEN
+          </Btn>
         </div>
-        <Btn variant="outline" onClick={()=>setShowImport(true)} sx={{ padding:'9px 18px', fontSize:'10px', letterSpacing:'2px' }}>
-          IMPORTAR ALMACEN
-        </Btn>
       </div>
 
-      {/* Search */}
-      <input
-        type="text" placeholder="Buscar producto..." value={searchQuery}
-        onChange={e=>setSearchQuery(e.target.value)}
-        style={{ width:'100%', padding:'10px 14px', marginBottom:14, borderRadius:4, fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, color:C.text, outline:'none' }}
-        onFocus={e=>e.target.style.borderColor=C.orange}
-        onBlur={e=>e.target.style.borderColor=C.border2}
-      />
-
-      {/* Category tabs */}
-      <div style={{ display:'flex', gap:6, marginBottom:12, overflowX:'auto', paddingBottom:4 }}>
-        {CATEGORY_TABS.map(t=>(
-          <button key={t.id} onClick={()=>setCategoryTab(t.id)} style={{
-            padding:'5px 14px', borderRadius:2, fontFamily:F, fontSize:'9px', letterSpacing:'2px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap',
-            background:categoryTab===t.id?C.orange:C.cardAlt, color:categoryTab===t.id?'#000':C.textSec,
-            border:categoryTab===t.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`,
-          }}>{t.label}</button>
-        ))}
-      </div>
-
-      {/* Risk filters */}
-      <div style={{ display:'flex', gap:6, marginBottom:16 }}>
-        {RISK_FILTERS.map(f=>(
-          <button key={f.id} onClick={()=>setRiskFilter(f.id)} style={{
-            padding:'5px 14px', borderRadius:2, fontFamily:F, fontSize:'9px', letterSpacing:'2px', fontWeight:700, cursor:'pointer',
-            background:riskFilter===f.id?C.orange:C.cardAlt, color:riskFilter===f.id?'#000':C.textSec,
-            border:riskFilter===f.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`,
-          }}>{f.label}</button>
-        ))}
-      </div>
-
-      {/* Table */}
-      {visible.length===0 ? (
-        <div style={{ padding:40, textAlign:'center', fontFamily:F, fontSize:'13px', color:C.textSec }}>
-          Sin resultados para "{searchQuery || riskFilter}"
+      {/* Navigation & Search (Fixed) */}
+      <div style={{ flexShrink: 0, marginBottom: 12 }}>
+        {/* Tabs Row */}
+        <div style={{ display:'flex', gap:6, overflowX:'auto', paddingBottom:8, marginBottom: 8, scrollbarWidth: 'none' }}>
+          {CATEGORY_TABS.map(t=>(
+            <button key={t.id} onClick={()=>setCategoryTab(t.id)} style={{
+              padding:'6px 16px', borderRadius:2, fontFamily:F, fontSize:'9px', letterSpacing:'2px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap',
+              background:categoryTab===t.id?C.orange:C.cardAlt, color:categoryTab===t.id?'#000':C.textSec,
+              border:categoryTab===t.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`,
+              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+            }}>{t.label}</button>
+          ))}
         </div>
-      ) : (
-        <div style={{ background:C.card, border:`1px solid ${C.border2}`, borderRadius:4, overflow:'hidden' }}>
+
+        {/* Risk Filter Row */}
+        <div style={{ display:'flex', gap:6, marginBottom: 12 }}>
+          {RISK_FILTERS.map(f=>(
+            <button key={f.id} onClick={()=>setRiskFilter(f.id)} style={{
+              padding:'6px 16px', borderRadius:2, fontFamily:F, fontSize:'9px', letterSpacing:'2px', fontWeight:700, cursor:'pointer',
+              background:riskFilter===f.id?C.orange:C.cardAlt, color:riskFilter===f.id?'#000':C.textSec,
+              border:riskFilter===f.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`,
+              transition: 'all 0.2s'
+            }}>{f.label}</button>
+          ))}
+        </div>
+
+        {/* Smart Search Bar - Full Width with feedback */}
+        <div style={{ position: 'relative', width: '100%' }}>
+          <Search size={14} color={C.textSec} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', opacity: 0.6 }} />
+          <input
+            type="text" 
+            placeholder={categoryTab === 'all' ? "Buscar en todo el inventario..." : `Buscar en ${CATEGORY_TABS.find(t=>t.id===categoryTab)?.label.toLowerCase()}...`}
+            value={searchQuery}
+            onChange={e=>setSearchQuery(e.target.value)}
+            style={{ 
+              width:'100%', 
+              padding:'12px 14px 12px 40px', 
+              borderRadius:4, 
+              fontFamily:F, 
+              fontSize:'13px', 
+              background:C.cardAlt, 
+              border:`1px solid ${C.border2}`, 
+              color:C.text, 
+              outline:'none',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+            }}
+            onFocus={e=>{
+              e.target.style.borderColor=C.orange;
+              e.target.style.background='#161616';
+              e.target.style.boxShadow=`0 0 0 2px ${C.orange}22`;
+            }}
+            onBlur={e=>{
+              e.target.style.borderColor=C.border2;
+              e.target.style.background=C.cardAlt;
+              e.target.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)';
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Scrollable Product Area */}
+      <div style={{ 
+        flex: 1, 
+        overflowY: 'auto', 
+        background: C.card, 
+        border: `1px solid ${C.border2}`, 
+        borderRadius: 4, 
+        display: 'flex', 
+        flexDirection: 'column',
+        marginBottom: 20,
+        boxShadow: 'inset 0 0 20px rgba(0,0,0,0.2)',
+        position: 'relative'
+      }}>
+        {visible.length===0 ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', padding: 40, textAlign:'center' }}>
+            <Search size={32} color={C.border2} style={{ marginBottom: 16 }} />
+            <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, letterSpacing: '1px' }}>
+              Sin resultados para "<span style={{ color: C.text }}>{searchQuery}</span>"
+            </div>
+            {categoryTab !== 'all' && (
+              <div style={{ marginTop: 8, fontSize: '11px', color: C.textSec }}>
+                Buscando solo en <span style={{ color: C.orange }}>{CATEGORY_TABS.find(t=>t.id===categoryTab)?.label}</span>
+              </div>
+            )}
+          </div>
+        ) : (
           <div style={{ overflowX:'auto' }}>
             <table style={{ width:'100%', borderCollapse:'collapse', minWidth:780 }}>
               <thead>
-                <tr style={{ background:'#0D0D0D', position:'sticky', top:0, zIndex:10 }}>
+                <tr style={{ background:'#0D0D0D', position:'sticky', top:0, zIndex:10, borderBottom: `1px solid ${C.border}` }}>
                   <th style={{...TH, width:'28%'}}>PRODUCTO</th>
                   <th style={{...TH, width:'14%'}}>STOCK</th>
                   <th style={{...TH, width:'11%'}}>ESTADO</th>
@@ -1904,11 +1962,11 @@ function Inventario() {
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Bottom analytics cards */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:16, marginTop:24 }}>
+      {/* Analytics (Fixed at bottom) */}
+      <div style={{ flexShrink: 0, display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:16 }}>
         <Card accent={C.purple} sx={{ padding:20 }}>
           <SLabel label="PREDICCION ESTE FIN DE SEMANA" color={C.purple} icon={Zap}/>
           {[["Gin Tonic Hendrick's","~52 uds"],["Aperol Spritz","~48 uds"],["Negroni","~38 uds"],["Mojito","~35 uds"],["Old Fashioned","~22 uds"]].map(([n,u],i)=>(
