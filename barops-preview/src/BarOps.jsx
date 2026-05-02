@@ -4929,6 +4929,205 @@ function LocalDrawer({ isOpen, onClose, localName, onLocalNameChange }) {
   );
 }
 
+// ─── COMPONENTES MÓVIL ────────────────────────────────────────────────────────
+
+function MobileTopBar({ screen, onMenuOpen, localName }) {
+  const screenLabels = {
+    dashboard: 'DASHBOARD', inventario: 'INVENTARIO', staffing: 'STAFFING',
+    agente: 'AGENTE IA', analytics: 'ANALYTICS', carta: 'CARTA',
+    pricing: 'BILLING', success: 'PAGO', local: 'LOCAL'
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, height: 56,
+      background: C.cardAlt, borderBottom: `1px solid ${C.border}`,
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: `env(safe-area-inset-top) 16px 0`,
+      zIndex: 100, fontFamily: F
+    }}>
+      <button onClick={onMenuOpen} style={{
+        background: 'none', border: 'none', cursor: 'pointer', padding: '8px 4px',
+        display: 'flex', alignItems: 'center', justifyContent: 'center'
+      }}>
+        <div style={{ width: 24, height: 20, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ width: '100%', height: 2, background: C.text, borderRadius: 1 }} />
+          <div style={{ width: '100%', height: 2, background: C.text, borderRadius: 1 }} />
+          <div style={{ width: '100%', height: 2, background: C.text, borderRadius: 1 }} />
+        </div>
+      </button>
+
+      <div style={{ fontSize: 11, letterSpacing: 2, color: C.text, fontWeight: 700 }}>
+        {screenLabels[screen] || 'BAROPS'}
+      </div>
+
+      <Bell size={20} color={C.textSec} style={{ cursor: 'pointer' }} />
+    </div>
+  );
+}
+
+function MobileBottomNav({ active, setActive, onMoreOpen }) {
+  const navItems = [
+    { id: 'dashboard', Icon: LayoutDashboard, label: 'INICIO' },
+    { id: 'inventario', Icon: Package, label: 'STOCK' },
+    { id: 'carta', Icon: BookOpen, label: 'CARTA' },
+    { id: 'agente', Icon: Bot, label: 'IA' },
+    { id: 'more', Icon: Menu, label: 'MÁS', isMore: true }
+  ];
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: 0, left: 0, right: 0,
+      height: 60, background: C.cardAlt, borderTop: `1px solid ${C.border}`,
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-around',
+      paddingBottom: `env(safe-area-inset-bottom)`,
+      zIndex: 100, fontFamily: F
+    }}>
+      {navItems.map(({ id, Icon, label, isMore }) => (
+        <button key={id} onClick={() => {
+          if (isMore) onMoreOpen();
+          else { setActive(id); if (navigator.vibrate) navigator.vibrate(10); }
+        }} style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', padding: '8px 4px', minHeight: 44,
+          transition: 'all 150ms', color: active === id && !isMore ? C.orange : '#444'
+        }}>
+          <Icon size={22} style={{ marginBottom: 3 }} />
+          <div style={{ fontSize: 8, letterSpacing: 1.5, fontWeight: 700 }}>{label}</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MobileDrawer({ isOpen, onClose, active, setActive, localName, onOpenLocalSettings }) {
+  const NAV = [
+    { id: 'dashboard', Icon: LayoutDashboard, label: 'DASHBOARD' },
+    { id: 'inventario', Icon: Package, label: 'INVENTARIO' },
+    { id: 'staffing', Icon: Users, label: 'STAFFING' },
+    { id: 'agente', Icon: Bot, label: 'AGENTE IA' },
+    { id: 'analytics', Icon: BarChart2, label: 'ANALYTICS' },
+    { id: 'carta', Icon: BookOpen, label: 'CARTA' },
+    { id: 'pricing', Icon: CreditCard, label: 'BILLING' },
+  ];
+
+  const handleNavClick = (id) => {
+    setActive(id);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <>
+      <div onClick={onClose} style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+        zIndex: 200, animation: 'fadeIn 0.2s'
+      }} />
+      <div style={{
+        position: 'fixed', left: 0, top: 0, bottom: 0, width: 280,
+        background: C.card, zIndex: 201, display: 'flex', flexDirection: 'column',
+        animation: 'slideIn 0.25s ease-out',
+        paddingTop: `env(safe-area-inset-top)`
+      }}>
+        <div style={{ padding: '20px 22px', borderBottom: `1px solid ${C.border2}` }}>
+          <div style={{ fontSize: 24, fontWeight: 700, color: C.orange, letterSpacing: 7 }}>BAROPS</div>
+          <div style={{ fontSize: 9, color: C.textSec, letterSpacing: 3, marginTop: 5 }}>MÓVIL</div>
+        </div>
+
+        <nav style={{ flex: 1, padding: '10px 0', overflowY: 'auto' }}>
+          {NAV.map(({ id, Icon, label }) => {
+            const on = active === id;
+            return (
+              <div key={id} onClick={() => handleNavClick(id)} style={{
+                display: 'flex', alignItems: 'center', gap: 12, padding: '12px 22px',
+                cursor: 'pointer', background: on ? `${C.orange}12` : 'transparent',
+                borderLeft: on ? `2px solid ${C.orange}` : '2px solid transparent',
+                transition: 'all 0.12s'
+              }}>
+                <Icon size={14} color={on ? C.orange : C.textSec} />
+                <span style={{
+                  fontSize: 11, letterSpacing: 2.5, color: on ? C.orange : C.textSec,
+                  fontWeight: on ? 700 : 400
+                }}>
+                  {label}
+                </span>
+              </div>
+            );
+          })}
+        </nav>
+
+        <div style={{ padding: '16px 22px', borderTop: `1px solid ${C.border2}` }}>
+          <button onClick={() => { onOpenLocalSettings?.(); onClose(); }}
+            style={{
+              width: '100%', padding: '10px 14px', background: C.cardAlt,
+              border: `1px solid ${C.border2}`, borderRadius: 4, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 10, fontSize: 11,
+              fontFamily: F, color: C.orange, fontWeight: 700
+            }}>
+            <Store size={14} color={C.orange} />
+            CONFIGURACIÓN
+          </button>
+        </div>
+      </div>
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideIn { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+      `}</style>
+    </>
+  );
+}
+
+function MoreBottomSheet({ isOpen, onClose, setScreen }) {
+  const moreItems = [
+    { id: 'staffing', Icon: Users, label: 'STAFFING', color: C.teal },
+    { id: 'analytics', Icon: BarChart2, label: 'ANALYTICS', color: C.purple },
+    { id: 'pricing', Icon: CreditCard, label: 'BILLING', color: C.amber },
+    { id: 'local', Icon: Store, label: 'CONFIGURACIÓN', color: C.orange },
+  ];
+
+  if (!isOpen) return null;
+
+  return (
+    <>
+      <div onClick={onClose} style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+        zIndex: 300, animation: 'fadeIn 0.2s'
+      }} />
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        background: C.card, borderRadius: '16px 16px 0 0',
+        zIndex: 301, padding: '20px 16px 20px', paddingBottom: `calc(20px + env(safe-area-inset-bottom))`,
+        animation: 'slideUp 0.3s ease-out'
+      }}>
+        <div style={{
+          width: 40, height: 4, background: C.border2, borderRadius: 2,
+          margin: '0 auto 20px', display: 'block'
+        }} />
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          {moreItems.map(({ id, Icon, label, color }) => (
+            <button key={id} onClick={() => { setScreen(id); onClose(); }}
+              style={{
+                padding: '16px 12px', background: `${color}15`, border: `1px solid ${color}33`,
+                borderRadius: 8, cursor: 'pointer', display: 'flex', flexDirection: 'column',
+                alignItems: 'center', gap: 8, fontSize: 10, fontFamily: F,
+                color, fontWeight: 700, letterSpacing: 1,
+                minHeight: 80, transition: 'all 0.2s'
+              }}>
+              <Icon size={24} color={color} />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <style>{`
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+      `}</style>
+    </>
+  );
+}
 
 export default function BarOps() {
   const params = new URLSearchParams(window.location.search);
@@ -5053,6 +5252,8 @@ export default function BarOps() {
     success:    <PaymentSuccess/>,
   };
   const [isMobile, setIsMobile] = useState(false);
+  const [showMobileDrawer, setShowMobileDrawer] = useState(false);
+  const [showMoreSheet, setShowMoreSheet] = useState(false);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 1024);
@@ -5079,11 +5280,23 @@ export default function BarOps() {
             body { font-size: 14px; }
           }
         `}</style>
-        <Sidebar active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={()=>setShowLocalDrawer(true)}/>
-        <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', marginTop:isMobile?60:0 }}>
+
+        {!isMobile && <Sidebar active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={()=>setShowLocalDrawer(true)}/>}
+
+        <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', marginTop:isMobile?56:0, paddingBottom:isMobile?60:0 }}>
           {SCREENS[screen]}
         </div>
       </div>
+
+      {isMobile && (
+        <>
+          <MobileTopBar screen={screen} onMenuOpen={() => setShowMobileDrawer(true)} localName={localName} />
+          <MobileBottomNav active={screen} setActive={setScreen} onMoreOpen={() => setShowMoreSheet(true)} />
+          <MobileDrawer isOpen={showMobileDrawer} onClose={() => setShowMobileDrawer(false)} active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={() => { setShowLocalDrawer(true); setShowMobileDrawer(false); }} />
+          <MoreBottomSheet isOpen={showMoreSheet} onClose={() => setShowMoreSheet(false)} setScreen={(s) => { setScreen(s); setShowMoreSheet(false); }} />
+        </>
+      )}
+
       <LocalDrawer isOpen={showLocalDrawer} onClose={()=>setShowLocalDrawer(false)} localName={localName} onLocalNameChange={setLocalName}/>
     </AppCtx.Provider>
   );
