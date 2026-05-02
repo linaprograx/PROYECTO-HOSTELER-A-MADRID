@@ -1248,6 +1248,7 @@ function InlineStock({ item, onSaved, setToast }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal]         = useState('');
   const [saving, setSaving]   = useState(false);
+  const [hover, setHover]     = useState(false);
   const inputRef = useRef(null);
 
   const startEdit = () => {
@@ -1256,7 +1257,7 @@ function InlineStock({ item, onSaved, setToast }) {
     setTimeout(() => { inputRef.current?.select(); }, 30);
   };
 
-  const cancel = () => setEditing(false);
+  const cancel = () => { setEditing(false); setHover(false); };
 
   const confirm = async () => {
     const newVal = parseFloat(val);
@@ -1265,12 +1266,15 @@ function InlineStock({ item, onSaved, setToast }) {
     try {
       const oldVal = parseFloat(item.stock_actual)||0;
       const diff   = newVal - oldVal;
-      // UPDATE productos
-      const payload = { stock_actual: newVal };
-      try { payload.updated_at = new Date().toISOString(); } catch(_) {}
-      const { error } = await supabase.from('productos').update(payload).eq('id', item.id);
+      
+      // Remove updated_at to avoid schema errors if column doesn't exist
+      const { error } = await supabase
+        .from('productos')
+        .update({ stock_actual: newVal })
+        .eq('id', item.id);
+        
       if (error) throw error;
-      // INSERT movimiento
+
       await supabase.from('movimientos_stock').insert({
         producto_id: item.id,
         local_id:    INV_LOCAL_ID,
@@ -1279,6 +1283,7 @@ function InlineStock({ item, onSaved, setToast }) {
         motivo:      'Ajuste manual de stock',
         fecha:       new Date().toISOString().split('T')[0],
       });
+
       onSaved(item.id, newVal);
       setToast('Stock actualizado');
       setEditing(false);
@@ -1294,35 +1299,113 @@ function InlineStock({ item, onSaved, setToast }) {
 
   if (!editing) return (
     <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       onClick={startEdit}
-      style={{ cursor:'pointer', display:'inline-flex', alignItems:'center', gap:5 }}
-      title="Clic para editar"
+      style={{ 
+        cursor:'pointer', 
+        display:'inline-flex', 
+        flexDirection: 'column',
+        gap: 2,
+        position: 'relative',
+        padding: '4px 8px',
+        borderRadius: 4,
+        background: hover ? 'rgba(255,255,255,0.03)' : 'transparent',
+        transition: 'all 0.2s'
+      }}
     >
-      <span style={{ fontFamily:F, fontSize:'15px', fontWeight:700, color:C.text }}>{parseFloat(item.stock_actual)||0}</span>
-      <span style={{ fontFamily:F, fontSize:'10px', color:C.textSec }}>{item.unidad}</span>
-      <span style={{ fontSize:'9px', color:C.textSec, opacity:0, transition:'opacity 0.15s' }}
-        className="edit-icon">✎</span>
+      <div style={{ display:'flex', alignItems:'baseline', gap:4 }}>
+        <span style={{ fontFamily:F, fontSize:'16px', fontWeight:700, color:C.text }}>{parseFloat(item.stock_actual)||0}</span>
+        <span style={{ fontFamily:F, fontSize:'10px', color:C.textSec }}>{item.unidad}</span>
+      </div>
+      <div style={{ 
+        fontFamily:F, 
+        fontSize:'8px', 
+        color:C.orange, 
+        letterSpacing:'1px', 
+        fontWeight:700,
+        opacity: hover ? 1 : 0,
+        transform: hover ? 'translateY(0)' : 'translateY(2px)',
+        transition: 'all 0.2s'
+      }}>
+        EDITAR
+      </div>
     </div>
   );
 
   return (
-    <div style={{ display:'inline-flex', alignItems:'center', gap:4 }}>
-      <input
-        ref={inputRef}
-        type="number"
-        value={val}
-        onChange={e=>setVal(e.target.value)}
-        onKeyDown={handleKey}
-        style={{
-          width:70, background:'transparent', border:'none',
-          borderBottom:`1px solid ${C.orange}`, outline:'none',
-          fontFamily:F, fontSize:'15px', fontWeight:700, color:C.orange,
-          padding:'0 2px',
-        }}
-      />
-      <span style={{ fontFamily:F, fontSize:'10px', color:C.textSec }}>{item.unidad}</span>
-      <button onClick={confirm} disabled={saving} style={{ background:'none', border:'none', cursor:'pointer', color:C.teal, fontSize:'14px', padding:0, fontWeight:700 }}>✓</button>
-      <button onClick={cancel}  style={{ background:'none', border:'none', cursor:'pointer', color:C.red,  fontSize:'14px', padding:0, fontWeight:700 }}>✕</button>
+    <div style={{ 
+      display:'inline-flex', 
+      flexDirection:'column', 
+      gap:8,
+      background: C.cardAlt,
+      border: `1px solid ${C.orange}44`,
+      borderRadius: 6,
+      padding: '10px',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+      zIndex: 10,
+      minWidth: 120
+    }}>
+      <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+        <input
+          ref={inputRef}
+          type="number"
+          value={val}
+          onChange={e=>setVal(e.target.value)}
+          onKeyDown={handleKey}
+          style={{
+            width: '100%',
+            background: '#111',
+            border: `1px solid ${C.orange}88`,
+            borderRadius: 3,
+            outline:'none',
+            fontFamily:F,
+            fontSize:'14px',
+            fontWeight:700,
+            color:C.orange,
+            padding:'6px 8px',
+            textAlign: 'center'
+          }}
+        />
+        <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec, fontWeight: 700 }}>{item.unidad}</span>
+      </div>
+      <div style={{ display:'flex', gap:4 }}>
+        <button 
+          onClick={confirm} 
+          disabled={saving} 
+          style={{ 
+            flex: 1,
+            background: C.teal, 
+            border: 'none', 
+            borderRadius: 3,
+            cursor:'pointer', 
+            color:'#000', 
+            fontSize:'10px', 
+            fontWeight:800,
+            padding: '6px 0',
+            letterSpacing: '1px'
+          }}
+        >
+          {saving ? '...' : 'OK'}
+        </button>
+        <button 
+          onClick={cancel} 
+          style={{ 
+            flex: 1,
+            background: 'transparent', 
+            border: `1px solid ${C.border2}`, 
+            borderRadius: 3,
+            cursor:'pointer', 
+            color:C.textSec, 
+            fontSize:'10px', 
+            fontWeight:800,
+            padding: '6px 0',
+            letterSpacing: '1px'
+          }}
+        >
+          ESC
+        </button>
+      </div>
     </div>
   );
 }
@@ -1396,7 +1479,7 @@ function ProductDrawer({ item, isOpen, onClose, onSaved, setToast }) {
         notas:              form.notas||null,
         ultima_reposicion:  form.ultima_reposicion||null,
       };
-      try { payload.updated_at = new Date().toISOString(); } catch(_) {}
+      // updated_at omitido — puede no existir en el schema
       const { error } = await supabase.from('productos').update(payload).eq('id', item.id);
       if (error) throw error;
       if (newStock !== oldStock) {
