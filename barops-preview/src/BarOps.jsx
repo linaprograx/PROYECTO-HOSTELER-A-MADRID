@@ -789,6 +789,20 @@ function Dashboard({ onNavigate }) {
   const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
   const { localName } = useApp();
 
+  const CHIPS = [
+    '¿Cómo mejorar mi margen en Gin Tonics?',
+    'Genera la lista de pedido para este finde',
+    '¿Cuál es mi cóctel más rentable?',
+    '¿Qué bartender me recomiendas para el sábado?',
+  ];
+
+  const handleAgentSubmit = (q) => {
+    const finalQuery = q || agentQuery;
+    if (!finalQuery.trim()) return;
+    localStorage.setItem('barops_agent_query', finalQuery);
+    onNavigate('agente');
+  };
+
   const fetchData = async () => {
     setLoading(true);
     setError(null);
