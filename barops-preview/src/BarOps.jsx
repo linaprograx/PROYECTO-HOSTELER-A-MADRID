@@ -1764,18 +1764,19 @@ function Inventario() {
       flexDirection: 'column', 
       padding: '24px 28px', 
       fontFamily: F,
-      overflow: 'hidden' 
+      overflow: 'hidden',
+      background: C.bg
     }}>
       {toast    && <Toast msg={toast} onClose={()=>setToast(null)}/>}
       {showImport && <ImportModal onClose={()=>setShowImport(false)}/>}
       <ProductDrawer item={drawerItem} isOpen={!!drawerItem} onClose={()=>setDrawerItem(null)} onSaved={handleDrawerSaved} setToast={setToast}/>
 
-      {/* Header (Fixed) */}
-      <div style={{ flexShrink: 0, marginBottom: 20 }}>
+      {/* Header (Always Fixed) */}
+      <div style={{ flexShrink: 0, marginBottom: 16 }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
           <div>
             <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INVENTARIO INTELIGENTE</h1>
-            <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, margin:'6px 0 0', display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+            <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, margin:'6px 0 0', display:'flex', alignItems:'center', gap:10 }}>
               <span>{totalRefs} referencias</span>
               <span style={{ color:criticos>0?C.red:C.textSec, fontWeight:criticos>0?700:400 }}>· {criticos} criticos</span>
               <span>· €{valorTotal.toFixed(0)} en stock</span>
@@ -1787,22 +1788,22 @@ function Inventario() {
         </div>
       </div>
 
-      {/* Navigation & Search (Fixed) */}
-      <div style={{ flexShrink: 0, marginBottom: 12 }}>
-        {/* Tabs Row */}
+      {/* Sections & Filters (Fixed) */}
+      <div style={{ flexShrink: 0 }}>
+        {/* Row 1: Categories */}
         <div style={{ display:'flex', gap:6, overflowX:'auto', paddingBottom:8, marginBottom: 8, scrollbarWidth: 'none' }}>
           {CATEGORY_TABS.map(t=>(
             <button key={t.id} onClick={()=>setCategoryTab(t.id)} style={{
               padding:'6px 16px', borderRadius:2, fontFamily:F, fontSize:'9px', letterSpacing:'2px', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap',
               background:categoryTab===t.id?C.orange:C.cardAlt, color:categoryTab===t.id?'#000':C.textSec,
               border:categoryTab===t.id?`1px solid ${C.orange}`:`1px solid ${C.border2}`,
-              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+              transition: 'all 0.2s'
             }}>{t.label}</button>
           ))}
         </div>
 
-        {/* Risk Filter Row */}
-        <div style={{ display:'flex', gap:6, marginBottom: 12 }}>
+        {/* Row 2: Risk Filters */}
+        <div style={{ display:'flex', gap:6, marginBottom: 16 }}>
           {RISK_FILTERS.map(f=>(
             <button key={f.id} onClick={()=>setRiskFilter(f.id)} style={{
               padding:'6px 16px', borderRadius:2, fontFamily:F, fontSize:'9px', letterSpacing:'2px', fontWeight:700, cursor:'pointer',
@@ -1812,13 +1813,15 @@ function Inventario() {
             }}>{f.label}</button>
           ))}
         </div>
+      </div>
 
-        {/* Smart Search Bar - Full Width with feedback */}
+      {/* Smart Search Bar - Positioned exactly above the window */}
+      <div style={{ flexShrink: 0, marginBottom: 12 }}>
         <div style={{ position: 'relative', width: '100%' }}>
           <Search size={14} color={C.textSec} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', opacity: 0.6 }} />
           <input
             type="text" 
-            placeholder={categoryTab === 'all' ? "Buscar en todo el inventario..." : `Buscar en ${CATEGORY_TABS.find(t=>t.id===categoryTab)?.label.toLowerCase()}...`}
+            placeholder={categoryTab === 'all' ? "Buscar producto..." : `Buscar en ${CATEGORY_TABS.find(t=>t.id===categoryTab)?.label.toLowerCase()}...`}
             value={searchQuery}
             onChange={e=>setSearchQuery(e.target.value)}
             style={{ 
@@ -1828,144 +1831,126 @@ function Inventario() {
               fontFamily:F, 
               fontSize:'13px', 
               background:C.cardAlt, 
-              border:`1px solid ${C.border2}`, 
+              border: searchQuery ? `1px solid ${C.orange}` : `1px solid ${C.border2}`, 
               color:C.text, 
               outline:'none',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+              transition: 'all 0.2s'
             }}
             onFocus={e=>{
               e.target.style.borderColor=C.orange;
               e.target.style.background='#161616';
-              e.target.style.boxShadow=`0 0 0 2px ${C.orange}22`;
             }}
             onBlur={e=>{
-              e.target.style.borderColor=C.border2;
+              if(!searchQuery) e.target.style.borderColor=C.border2;
               e.target.style.background=C.cardAlt;
-              e.target.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)';
             }}
           />
         </div>
       </div>
 
-      {/* Scrollable Product Area */}
+      {/* FIXED WINDOW: Internal Scroll Product List */}
       <div style={{ 
         flex: 1, 
-        overflowY: 'auto', 
+        overflow: 'hidden', 
+        display: 'flex', 
+        flexDirection: 'column',
         background: C.card, 
         border: `1px solid ${C.border2}`, 
         borderRadius: 4, 
-        display: 'flex', 
-        flexDirection: 'column',
-        marginBottom: 20,
-        boxShadow: 'inset 0 0 20px rgba(0,0,0,0.2)',
-        position: 'relative'
+        marginBottom: 20
       }}>
-        {visible.length===0 ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', padding: 40, textAlign:'center' }}>
-            <Search size={32} color={C.border2} style={{ marginBottom: 16 }} />
-            <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, letterSpacing: '1px' }}>
-              Sin resultados para "<span style={{ color: C.text }}>{searchQuery}</span>"
+        <div style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
+          {visible.length===0 ? (
+            <div style={{ padding: 40, textAlign:'center', color: C.textSec }}>
+              Sin resultados para "{searchQuery}"
             </div>
-            {categoryTab !== 'all' && (
-              <div style={{ marginTop: 8, fontSize: '11px', color: C.textSec }}>
-                Buscando solo en <span style={{ color: C.orange }}>{CATEGORY_TABS.find(t=>t.id===categoryTab)?.label}</span>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div style={{ overflowX:'auto' }}>
-            <table style={{ width:'100%', borderCollapse:'collapse', minWidth:780 }}>
-              <thead>
-                <tr style={{ background:'#0D0D0D', position:'sticky', top:0, zIndex:10, borderBottom: `1px solid ${C.border}` }}>
-                  <th style={{...TH, width:'28%'}}>PRODUCTO</th>
-                  <th style={{...TH, width:'14%'}}>STOCK</th>
-                  <th style={{...TH, width:'11%'}}>ESTADO</th>
-                  <th style={{...TH, width:'9%'}}>MINIMO</th>
-                  <th style={{...TH, width:'11%'}}>COSTE</th>
-                  <th style={{...TH, width:'11%'}}>ULT. REPOSICION</th>
-                  <th style={{...TH, width:'16%'}}>ACCION</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((p,i) => {
-                  const estado   = getEstado(p);
-                  const repDate  = fmtDate(p.ultima_reposicion);
-                  const valStock = (parseFloat(p.stock_actual||0)*parseFloat(p.coste_unitario||0)).toFixed(2);
-                  const esCrit   = estado==='critical' || estado==='preventivo';
-                  return (
-                    <tr key={p.id} style={{ borderBottom:`1px solid #1A1A1A`, background:i%2===0?'transparent':'#0D0D0D0A', minHeight:64 }}
-                      onMouseEnter={e=>{e.currentTarget.style.background='#161616';}}
-                      onMouseLeave={e=>{e.currentTarget.style.background=i%2===0?'transparent':'#0D0D0D0A';}}>
+          ) : (
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', minWidth:780 }}>
+                <thead>
+                  <tr style={{ background:'#0D0D0D', position:'sticky', top:0, zIndex:10, borderBottom: `1px solid ${C.border}` }}>
+                    <th style={{...TH, width:'28%'}}>PRODUCTO</th>
+                    <th style={{...TH, width:'14%'}}>STOCK</th>
+                    <th style={{...TH, width:'11%'}}>ESTADO</th>
+                    <th style={{...TH, width:'9%'}}>MINIMO</th>
+                    <th style={{...TH, width:'11%'}}>COSTE</th>
+                    <th style={{...TH, width:'11%'}}>ULT. REPOSICION</th>
+                    <th style={{...TH, width:'16%'}}>ACCION</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((p,i) => {
+                    const estado   = getEstado(p);
+                    const repDate  = fmtDate(p.ultima_reposicion);
+                    const valStock = (parseFloat(p.stock_actual||0)*parseFloat(p.coste_unitario||0)).toFixed(2);
+                    const esCrit   = estado==='critical' || estado==='preventivo';
+                    return (
+                      <tr key={p.id} style={{ borderBottom:`1px solid #1A1A1A`, background:i%2===0?'transparent':'#0D0D0D0A', minHeight:64 }}
+                        onMouseEnter={e=>{e.currentTarget.style.background='#161616';}}
+                        onMouseLeave={e=>{e.currentTarget.style.background=i%2===0?'transparent':'#0D0D0D0A';}}>
 
-                      {/* PRODUCTO */}
-                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
-                        <div style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:C.text }}>{p.nombre}</div>
-                        <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>{p.categoria||'—'}</div>
-                        {p.proveedor && (
-                          <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, marginTop:2, display:'flex', alignItems:'center', gap:4 }}>
-                            <span style={{ fontSize:'8px' }}>▲</span>{p.proveedor}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* STOCK */}
-                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
-                        <InlineStock item={p} onSaved={handleStockSaved} setToast={setToast}/>
-                        <StockMiniBar stock={p.stock_actual} minimo={p.stock_minimo}/>
-                      </td>
-
-                      {/* ESTADO */}
-                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
-                        <EstadoBadge stock={p.stock_actual} minimo={p.stock_minimo}/>
-                      </td>
-
-                      {/* MINIMO */}
-                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
-                        <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>MIN</div>
-                        <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec }}>{parseFloat(p.stock_minimo)||0} {p.unidad}</div>
-                      </td>
-
-                      {/* COSTE */}
-                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
-                        <div style={{ fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>€{parseFloat(p.coste_unitario||0).toFixed(2)}</div>
-                        <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>€{valStock} total</div>
-                      </td>
-
-                      {/* ULT. REPOSICION */}
-                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
-                        {repDate ? (
-                          <div style={{ fontFamily:F, fontSize:'11px', color:repDate.warn?C.amber:C.textSec }}>{repDate.text}</div>
-                        ) : (
-                          <div style={{ fontFamily:F, fontSize:'11px', color:'#444' }}>Sin datos</div>
-                        )}
-                      </td>
-
-                      {/* ACCION */}
-                      <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
-                        <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
-                          {esCrit && (
-                            <button onClick={()=>handlePedir(p)} style={{
-                              fontFamily:F, fontSize:'9px', letterSpacing:'1.5px', fontWeight:700,
-                              padding:'4px 10px', borderRadius:2, cursor:'pointer',
-                              background:C.orange, color:'#000', border:'none',
-                            }}>PEDIR</button>
+                        <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                          <div style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:C.text }}>{p.nombre}</div>
+                          <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>{p.categoria||'—'}</div>
+                          {p.proveedor && (
+                            <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, marginTop:2, display:'flex', alignItems:'center', gap:4 }}>
+                              <span style={{ fontSize:'8px' }}>▲</span>{p.proveedor}
+                            </div>
                           )}
-                          <Btn variant="ghost" onClick={()=>setDrawerItem(p)} sx={{ padding:'4px 10px', fontSize:'9px' }}>
-                            EDITAR
-                          </Btn>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                        </td>
+
+                        <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                          <InlineStock item={p} onSaved={handleStockSaved} setToast={setToast}/>
+                          <StockMiniBar stock={p.stock_actual} minimo={p.stock_minimo}/>
+                        </td>
+
+                        <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                          <EstadoBadge stock={p.stock_actual} minimo={p.stock_minimo}/>
+                        </td>
+
+                        <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                          <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>MIN</div>
+                          <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec }}>{parseFloat(p.stock_minimo)||0} {p.unidad}</div>
+                        </td>
+
+                        <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                          <div style={{ fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>€{parseFloat(p.coste_unitario||0).toFixed(2)}</div>
+                          <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>€{valStock} total</div>
+                        </td>
+
+                        <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                          {repDate ? (
+                            <div style={{ fontFamily:F, fontSize:'11px', color:repDate.warn?C.amber:C.textSec }}>{repDate.text}</div>
+                          ) : (
+                            <div style={{ fontFamily:F, fontSize:'11px', color:'#444' }}>Sin datos</div>
+                          )}
+                        </td>
+
+                        <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
+                          <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
+                            {esCrit && (
+                              <button onClick={()=>handlePedir(p)} style={{
+                                fontFamily:F, fontSize:'9px', letterSpacing:'1.5px', fontWeight:700,
+                                padding:'4px 10px', borderRadius:2, cursor:'pointer',
+                                background:C.orange, color:'#000', border:'none',
+                              }}>PEDIR</button>
+                            )}
+                            <Btn variant="ghost" onClick={()=>setDrawerItem(p)} sx={{ padding:'4px 10px', fontSize:'9px' }}>
+                              EDITAR
+                            </Btn>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Analytics (Fixed at bottom) */}
+      {/* Analytics Cards (Fixed at bottom) */}
       <div style={{ flexShrink: 0, display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:16 }}>
         <Card accent={C.purple} sx={{ padding:20 }}>
           <SLabel label="PREDICCION ESTE FIN DE SEMANA" color={C.purple} icon={Zap}/>
