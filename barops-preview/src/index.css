@@ -1,6 +1,7 @@
 *, *::before, *::after { box-sizing: border-box; touch-action: manipulation; }
-html, body, #root { margin: 0; padding: 0; width: 100%; height: 100%; }
-body { background: #0A0A0A; -webkit-overflow-scrolling: touch; }
+html { margin: 0; padding: 0; width: 100%; height: 100%; overflow-x: hidden !important; overflow-y: auto !important; }
+body { margin: 0; padding: 0; width: 100%; height: 100%; background: #0A0A0A; -webkit-overflow-scrolling: touch; overflow-x: hidden !important; overflow-y: visible !important; }
+#root { margin: 0; padding: 0; width: 100%; height: 100%; overflow-x: hidden !important; overflow-y: hidden !important; }
 
 /* Smooth scrolling for mobile */
 div[style*="overflow"], div[style*="scroll"] {

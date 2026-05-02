@@ -703,7 +703,7 @@ function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
   if (mobile) {
     return (
       <>
-        <div style={{ position:'fixed', top:0, left:0, right:0, height:60, background:C.cardAlt, borderBottom:`1px solid ${C.border2}`, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 20px', zIndex:1000 }}>
+        <div style={{ position:'fixed', top:0, left:0, right:0, height:60, background:C.cardAlt, borderBottom:`1px solid ${C.border2}`, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 20px', boxSizing:'border-box', zIndex:1000 }}>
           <button onClick={()=>setSidebarOpen(!sidebarOpen)} style={{ background:'none', border:'none', cursor:'pointer', color:C.orange, display:'flex', alignItems:'center', justifyContent:'center' }}>
             {sidebarOpen ? <X size={20}/> : <ChevronDown size={20} style={{transform:'rotate(-90deg)'}}/>}
           </button>
@@ -5151,7 +5151,10 @@ function MobileTopBar({ screen, onMenuOpen, localName }) {
       position: 'fixed', top: 0, left: 0, right: 0, height: 56,
       background: C.cardAlt, borderBottom: `1px solid ${C.border}`,
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: `env(safe-area-inset-top) 16px 0`,
+      paddingTop: `env(safe-area-inset-top)`,
+      paddingLeft: `max(16px, env(safe-area-inset-left))`,
+      paddingRight: `max(16px, env(safe-area-inset-right))`,
+      boxSizing: 'border-box',
       zIndex: 100, fontFamily: F
     }}>
       <button onClick={onMenuOpen} style={{
@@ -5189,6 +5192,9 @@ function MobileBottomNav({ active, setActive, onMoreOpen }) {
       height: 60, background: C.cardAlt, borderTop: `1px solid ${C.border}`,
       display: 'flex', alignItems: 'flex-start', justifyContent: 'space-around',
       paddingBottom: `env(safe-area-inset-bottom)`,
+      paddingLeft: `max(0, env(safe-area-inset-left))`,
+      paddingRight: `max(0, env(safe-area-inset-right))`,
+      boxSizing: 'border-box',
       zIndex: 100, fontFamily: F
     }}>
       {navItems.map(({ id, Icon, label, isMore }) => (
@@ -5306,7 +5312,12 @@ function MoreBottomSheet({ isOpen, onClose, setScreen }) {
       <div style={{
         position: 'fixed', bottom: 0, left: 0, right: 0,
         background: C.card, borderRadius: '16px 16px 0 0',
-        zIndex: 301, padding: '20px 16px 20px', paddingBottom: `calc(20px + env(safe-area-inset-bottom))`,
+        zIndex: 301,
+        paddingTop: 20,
+        paddingLeft: `max(16px, env(safe-area-inset-left))`,
+        paddingRight: `max(16px, env(safe-area-inset-right))`,
+        paddingBottom: `calc(20px + env(safe-area-inset-bottom))`,
+        boxSizing: 'border-box',
         animation: 'slideUp 0.3s ease-out'
       }}>
         <div style={{
@@ -5464,7 +5475,7 @@ export default function BarOps() {
   const [showMoreSheet, setShowMoreSheet] = useState(false);
 
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 1024);
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
