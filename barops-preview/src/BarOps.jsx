@@ -1246,68 +1246,7 @@ function Dashboard({ onNavigate }) {
     </div>
   );
 }
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:28 }}>
-        <div>
-          <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>DASHBOARD</h1>
-          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Paradiso Cocktail Bar — {new Date().toLocaleDateString('es-ES', {weekday:'long', year:'numeric', month:'long', day:'numeric'})}</p>
-        </div>
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <Bell size={15} color={C.textSec} style={{ cursor:'pointer' }}/>
-          <div style={{ padding:'6px 14px', background:C.tealBg, border:`1px solid ${C.teal}44`, borderRadius:2, fontFamily:F, fontSize:'9px', color:C.teal, letterSpacing:'2px', fontWeight:700 }}>
-            ● SISTEMA ACTIVO
-          </div>
-        </div>
-      </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
-        {kpis.map(({ label,value,sub,color,Icon,bg },i)=>(
-          <Card key={i} accent={color} sx={{ padding:20, background:bg }}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
-              <div>
-                <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>{label}</div>
-                <div style={{ fontSize:'30px', color, fontWeight:700, letterSpacing:'1px', lineHeight:1 }}>{value}</div>
-                <div style={{ fontSize:'11px', color:C.textSec, marginTop:8 }}>{sub}</div>
-              </div>
-              <Icon size={22} color={color} style={{ opacity:.55 }}/>
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:14, marginBottom:16 }}>
-        <Card sx={{ padding:20 }}>
-          <SLabel label="ALERTAS DE INVENTARIO" color={C.orange} icon={AlertTriangle}/>
-          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-            {criticalProducts.length > 0 ? (
-              criticalProducts.map((item,i) => (
-                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 0', borderBottom:`1px solid ${C.border2}` }}>
-                  <div>
-                    <div style={{ fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>{item.nombre}</div>
-                    <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>Stock: {item.stock_actual} {item.unidad} (mín: {item.stock_minimo})</div>
-                  </div>
-                  <div style={{ padding:'4px 10px', background:'#EF444420', border:`1px solid #EF4444`, borderRadius:3, fontFamily:F, fontSize:'9px', color:'#EF4444', fontWeight:700 }}>CRÍTICO</div>
-                </div>
-              ))
-            ) : (
-              <div style={{ padding:'16px 0', textAlign:'center', color:C.teal, fontFamily:F, fontSize:'12px' }}>Todo el inventario en niveles correctos ✓</div>
-            )}
-          </div>
-        </Card>
-      </div>
-
-      <Card sx={{ padding:20 }}>
-        <SLabel label="ASISTENTE IA" color={C.purple} icon={Bot}/>
-        <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginTop:14 }}>
-          {CHIPS.map((c,i) => (
-            <button key={i} onClick={() => setToast('Abriendo chat IA...')} style={{ padding:'8px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'10px', color:C.textSec, transition:'all 0.2s' }}>
-              {c}
-            </button>
-          ))}
-        </div>
-      </Card>
-    </div>
-  );
-}
 
 
 function ImportCocktailsModal({ onClose, onSave }) {
