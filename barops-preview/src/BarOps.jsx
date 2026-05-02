@@ -778,6 +778,34 @@ const Skeleton = ({ width = '100%', height = 20, borderRadius = 4, mb = 0 }) => 
   </div>
 );
 
+const formatDateRelative = (dateStr) => {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHour = Math.floor(diffMs / 3600000);
+  const diffDay = Math.floor(diffMs / 86400000);
+
+  if (diffMin < 1) return 'Ahora mismo';
+  if (diffMin < 60) return `Hace ${diffMin} min`;
+  if (diffHour < 24) return `Hace ${diffHour}h`;
+  if (diffDay === 1) return 'Ayer';
+  return `Hace ${diffDay} días`;
+};
+
+const getSeverityColor = (s) => {
+  if (s <= 0) return '#EF4444';
+  if (s <= 5) return '#F59E0B';
+  return '#10B981';
+};
+
+const getSeverityLabel = (s) => {
+  if (s <= 0) return 'CRÍTICO';
+  if (s <= 5) return 'MEDIO';
+  return 'ESTABLE';
+};
+
 function Dashboard({ onNavigate }) {
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(true);
