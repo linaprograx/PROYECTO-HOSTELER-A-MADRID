@@ -950,13 +950,6 @@ function Dashboard({ onNavigate }) {
     return d.toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit' });
   };
 
-  const handleAgentSubmit = (q) => {
-    const query = q || agentQuery;
-    if (!query.trim()) return;
-    localStorage.setItem('barops_agent_query', query);
-    onNavigate('agente');
-  };
-
   if (error) {
     return (
       <div style={{ flex:1, padding:40, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column' }}>
