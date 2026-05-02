@@ -998,27 +998,31 @@ function Dashboard({ onNavigate }) {
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
           <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, margin:0, fontWeight:700 }}>ACCIONES DE HOY ({alerts.length})</h2>
         </div>
-        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-          {loading ? [1,2,3].map(i => <Skeleton key={i} height={60} />) : (
-            visibleAlerts.map((a, i) => (
-              <div key={i} style={{
-                display:'flex', justifyContent:'space-between', alignItems:'center',
-                padding:'14px 20px', borderRadius:4,
-                background: a.type==='critical' ? '#FF000008' : a.type==='preventive' ? '#F59E0B08' : a.type==='carta' ? '#7C3AED08' : '#00D4AA08',
-                borderLeft: `3px solid ${a.type==='critical' ? C.red : a.type==='preventive' ? C.amber : a.type==='carta' ? C.purple : C.teal}`,
-                animation: `fadeIn 0.2s ease-out ${i*50}ms both`,
-                border: `1px solid ${C.border}`
-              }}>
-                <style>{`@keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }`}</style>
-                <span style={{ fontSize:'13px', color:C.text, fontWeight:500 }}>{a.text}</span>
-                {a.action && <Btn variant="ghost" onClick={a.handler} sx={{ padding:'6px 12px', fontSize:'10px' }}>{a.action}</Btn>}
+        <Card sx={{ overflow:'hidden', maxHeight:'200px', overflowY:'auto' }}>
+          <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
+            {loading ? [1,2,3].map(i => <Skeleton key={i} height={50} />) : (
+              visibleAlerts.map((a, i) => (
+                <div key={i} style={{
+                  display:'flex', justifyContent:'space-between', alignItems:'center',
+                  padding:'10px 16px', borderBottom:`1px solid ${C.border}`,
+                  background: a.type==='critical' ? '#FF000006' : a.type==='preventive' ? '#F59E0B06' : a.type==='carta' ? '#7C3AED06' : '#00D4AA06',
+                  borderLeft: `3px solid ${a.type==='critical' ? C.red : a.type==='preventive' ? C.amber : a.type==='carta' ? C.purple : C.teal}`,
+                  animation: `fadeIn 0.2s ease-out ${i*50}ms both`,
+                  transition:'background 0.2s'
+                }} onMouseEnter={e=>e.currentTarget.style.background='#1A1A1A'} onMouseLeave={e=>e.currentTarget.style.background=a.type==='critical' ? '#FF000006' : a.type==='preventive' ? '#F59E0B06' : a.type==='carta' ? '#7C3AED06' : '#00D4AA06'}>
+                  <style>{`@keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }`}</style>
+                  <span style={{ fontSize:'11px', color:'#666666', fontWeight:400, flex:1 }}>{a.text}</span>
+                  {a.action && <Btn variant="ghost" onClick={a.handler} sx={{ padding:'4px 10px', fontSize:'8px', flexShrink:0, marginLeft:8 }}>{a.action}</Btn>}
+                </div>
+              ))
+            )}
+            {!expandedAlerts && alerts.length > 8 && (
+              <div style={{ padding:'10px 16px', borderTop:`1px solid ${C.border}`, textAlign:'center' }}>
+                <Btn variant="ghost" onClick={()=>setExpandedAlerts(true)} sx={{ fontSize:'8px' }}>VER TODAS ({alerts.length})</Btn>
               </div>
-            ))
-          )}
-          {!expandedAlerts && alerts.length > 8 && (
-            <Btn variant="ghost" onClick={()=>setExpandedAlerts(true)} sx={{ justifyContent:'center', marginTop:4 }}>VER TODAS ({alerts.length})</Btn>
-          )}
-        </div>
+            )}
+          </div>
+        </Card>
       </div>
 
       {/* SECCIÓN 3 — 4 KPIs */}
