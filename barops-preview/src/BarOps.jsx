@@ -5362,19 +5362,29 @@ function LoginPage({ onLogin }) {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const particles = Array.from({ length: 70 }, () => ({
+    const particles = Array.from({ length: 100 }, () => ({
       x: Math.random() * canvas.width,
       y: Math.random() * canvas.height,
-      vx: (Math.random() - 0.5) * 0.4,
-      vy: (Math.random() - 0.5) * 0.4,
-      color: ['#FF6B35', '#00D4AA', '#7C3AED'][Math.floor(Math.random() * 3)],
-      r: Math.random() * 2 + 1,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5,
+      color: Math.random() > 0.5 ? '#FF6B35' : '#8B1A1A',
+      r: Math.random() * 2.5 + 1,
+    }));
+
+    const lines = Array.from({ length: 8 }, () => ({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      angle: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.3 + 0.1,
     }));
 
     let raf;
+    let frameCount = 0;
     const animate = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#0A0A0A';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+      frameCount++;
       particles.forEach(p => {
         p.x += p.vx;
         p.y += p.vy;
@@ -5383,20 +5393,33 @@ function LoginPage({ onLogin }) {
 
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = p.color + '99';
+        ctx.fillStyle = p.color + 'CC';
         ctx.fill();
+      });
+
+      lines.forEach(line => {
+        line.angle += 0.001;
+        const length = 200;
+        const x2 = line.x + Math.cos(line.angle) * length;
+        const y2 = line.y + Math.sin(line.angle) * length;
+        ctx.beginPath();
+        ctx.moveTo(line.x, line.y);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = frameCount % 3 === 0 ? '#FF6B3533' : '#8B1A1A33';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
       });
 
       particles.forEach((a, i) => {
         particles.slice(i + 1).forEach(b => {
           const d = Math.hypot(a.x - b.x, a.y - b.y);
-          if (d < 120) {
+          if (d < 150) {
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);
             ctx.lineTo(b.x, b.y);
-            const alpha = Math.floor((1 - d / 120) * 40).toString(16).padStart(2, '0');
+            const alpha = Math.floor((1 - d / 150) * 80).toString(16).padStart(2, '0');
             ctx.strokeStyle = a.color + alpha;
-            ctx.lineWidth = 0.5;
+            ctx.lineWidth = 0.8;
             ctx.stroke();
           }
         });
@@ -5426,7 +5449,7 @@ function LoginPage({ onLogin }) {
     setTimeout(() => {
       localStorage.setItem('barops_auth', JSON.stringify({ email, ts: Date.now() }));
       onLogin();
-    }, 600);
+    }, 400);
   };
 
   return (
@@ -5443,36 +5466,27 @@ function LoginPage({ onLogin }) {
     }}>
       <style>{`
         @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(40px); }
+          from { opacity: 0; transform: translateY(50px); }
           to { opacity: 1; transform: translateY(0); }
         }
-        @keyframes orb1 {
-          0% { transform: translate(0, 0); }
-          50% { transform: translate(100px, -50px); }
-          100% { transform: translate(0, 0); }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.7; }
         }
-        @keyframes orb2 {
-          0% { transform: translate(0, 0); }
-          50% { transform: translate(-80px, 60px); }
-          100% { transform: translate(0, 0); }
+        @keyframes glow {
+          0%, 100% { box-shadow: 0 0 30px rgba(255, 107, 53, 0.2), inset 0 0 30px rgba(255, 107, 53, 0.05); }
+          50% { box-shadow: 0 0 50px rgba(255, 107, 53, 0.4), inset 0 0 30px rgba(255, 107, 53, 0.1); }
         }
-        @keyframes orb3 {
-          0% { transform: translate(0, 0); }
-          50% { transform: translate(60px, 80px); }
-          100% { transform: translate(0, 0); }
+        .login-card {
+          animation: fadeInUp 0.9s ease-out, glow 3s ease-in-out infinite;
         }
-        .login-orb {
-          position: absolute;
-          border-radius: 50%;
-          filter: blur(60px);
-          opacity: 0.15;
-          mix-blend-mode: screen;
+        input::placeholder { color: #555; }
+        input:focus {
+          outline: none;
+          border-color: #FF6B35;
+          box-shadow: 0 0 20px rgba(255, 107, 53, 0.5), inset 0 0 10px rgba(255, 107, 53, 0.1);
+          background: rgba(20, 20, 20, 0.8);
         }
-        .login-orb1 { width: 400px; height: 400px; background: #FF6B35; animation: orb1 12s ease-in-out infinite; }
-        .login-orb2 { width: 350px; height: 350px; background: #00D4AA; animation: orb2 14s ease-in-out infinite; }
-        .login-orb3 { width: 300px; height: 300px; background: #7C3AED; animation: orb3 16s ease-in-out infinite; }
-        .login-card { animation: fadeInUp 0.8s ease-out; }
-        input:focus { outline: none; border-color: #FF6B35; box-shadow: 0 0 12px rgba(255, 107, 53, 0.3); }
       `}</style>
 
       <canvas ref={canvasRef} style={{
@@ -5481,77 +5495,76 @@ function LoginPage({ onLogin }) {
         zIndex: 1,
       }} />
 
-      <div style={{ position: 'absolute', top: '10%', left: '15%', zIndex: 2 }}>
-        <div className="login-orb login-orb1" />
-      </div>
-      <div style={{ position: 'absolute', bottom: '20%', right: '10%', zIndex: 2 }}>
-        <div className="login-orb login-orb2" />
-      </div>
-      <div style={{ position: 'absolute', top: '50%', right: '20%', zIndex: 2 }}>
-        <div className="login-orb login-orb3" />
-      </div>
-
       <div className="login-card" style={{
         position: 'relative',
         zIndex: 10,
         width: '100%',
-        maxWidth: '420px',
-        padding: '48px',
-        background: 'rgba(17, 17, 17, 0.85)',
-        backdropFilter: 'blur(20px)',
-        border: '1px solid rgba(255, 107, 53, 0.2)',
-        borderRadius: '16px',
-        boxShadow: '0 0 40px rgba(255, 107, 53, 0.1), 0 0 80px rgba(0, 212, 170, 0.05)',
+        maxWidth: '480px',
+        padding: '56px 48px',
+        background: 'rgba(15, 15, 15, 0.92)',
+        backdropFilter: 'blur(40px)',
+        WebkitBackdropFilter: 'blur(40px)',
+        border: '2px solid',
+        borderImage: 'linear-gradient(135deg, rgba(255, 107, 53, 0.6), rgba(139, 26, 26, 0.4)) 1',
+        borderRadius: '20px',
+        boxShadow: '0 0 60px rgba(255, 107, 53, 0.15), inset 0 0 60px rgba(255, 107, 53, 0.03), 0 25px 50px rgba(0, 0, 0, 0.5)',
       }}>
-        <div style={{ textAlign: 'center', marginBottom: '36px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '40px' }}>
           <div style={{
-            width: '48px',
-            height: '48px',
-            margin: '0 auto 12px',
-            background: '#FF6B35',
-            borderRadius: '8px',
+            width: '56px',
+            height: '56px',
+            margin: '0 auto 16px',
+            background: 'linear-gradient(135deg, #FF6B35, #8B1A1A)',
+            borderRadius: '12px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: '24px',
+            fontSize: '28px',
+            boxShadow: '0 0 25px rgba(255, 107, 53, 0.4)',
           }}>🍹</div>
           <h1 style={{
-            fontSize: '24px',
-            fontWeight: 700,
+            fontSize: '32px',
+            fontWeight: 900,
             color: '#E8E8E8',
-            margin: '0 0 6px',
-            letterSpacing: '2px',
+            margin: '0 0 8px',
+            letterSpacing: '3px',
+            textShadow: '0 2px 8px rgba(255, 107, 53, 0.2)',
           }}>BAROPS</h1>
           <p style={{
-            fontSize: '12px',
-            color: '#00D4AA',
-            margin: '0',
-            letterSpacing: '1.2px',
-          }}>Sistema Operativo del Bar</p>
-          <div style={{
-            display: 'inline-block',
-            marginTop: '12px',
-            padding: '4px 10px',
-            border: '1px solid rgba(255, 107, 53, 0.5)',
-            borderRadius: '4px',
-            fontSize: '9px',
+            fontSize: '13px',
             color: '#FF6B35',
-            letterSpacing: '1px',
-            fontWeight: 700,
-          }}>ACCESO PRIVADO</div>
+            margin: '0 0 20px',
+            letterSpacing: '2px',
+            fontWeight: 600,
+          }}>SISTEMA OPERATIVO DEL BAR</p>
+          <div style={{
+            height: '1px',
+            background: 'linear-gradient(90deg, transparent, #FF6B35, transparent)',
+            margin: '20px 0',
+          }} />
+          <p style={{
+            fontSize: '14px',
+            color: '#CCC',
+            margin: '20px 0 0',
+            fontStyle: 'italic',
+            fontWeight: 500,
+          }}>
+            Gestiona tu bar como nunca antes. <br/>
+            <span style={{ color: '#FF6B35', fontWeight: 700 }}>Velocidad, precisión, control.</span>
+          </p>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
           <div>
             <label style={{
               display: 'block',
-              fontSize: '10px',
-              color: '#888888',
-              letterSpacing: '1.5px',
-              marginBottom: '8px',
+              fontSize: '11px',
+              color: '#999',
+              letterSpacing: '1.8px',
+              marginBottom: '10px',
               textTransform: 'uppercase',
               fontWeight: 700,
-            }}>Email</label>
+            }}>Correo Electrónico</label>
             <input
               type="email"
               value={email}
@@ -5559,14 +5572,14 @@ function LoginPage({ onLogin }) {
               placeholder="tu@email.com"
               style={{
                 width: '100%',
-                padding: '12px 14px',
-                background: '#0D0D0D',
-                border: '1px solid #1A1A1A',
-                borderRadius: '6px',
+                padding: '14px 16px',
+                background: 'rgba(20, 20, 20, 0.8)',
+                border: '2px solid rgba(255, 107, 53, 0.2)',
+                borderRadius: '10px',
                 color: '#E8E8E8',
                 fontFamily: F,
-                fontSize: '13px',
-                transition: 'all 0.2s',
+                fontSize: '14px',
+                transition: 'all 0.3s',
               }}
             />
           </div>
@@ -5574,10 +5587,10 @@ function LoginPage({ onLogin }) {
           <div>
             <label style={{
               display: 'block',
-              fontSize: '10px',
-              color: '#888888',
-              letterSpacing: '1.5px',
-              marginBottom: '8px',
+              fontSize: '11px',
+              color: '#999',
+              letterSpacing: '1.8px',
+              marginBottom: '10px',
               textTransform: 'uppercase',
               fontWeight: 700,
             }}>Contraseña</label>
@@ -5588,14 +5601,14 @@ function LoginPage({ onLogin }) {
               placeholder="••••••••"
               style={{
                 width: '100%',
-                padding: '12px 14px',
-                background: '#0D0D0D',
-                border: '1px solid #1A1A1A',
-                borderRadius: '6px',
+                padding: '14px 16px',
+                background: 'rgba(20, 20, 20, 0.8)',
+                border: '2px solid rgba(255, 107, 53, 0.2)',
+                borderRadius: '10px',
                 color: '#E8E8E8',
                 fontFamily: F,
-                fontSize: '13px',
-                transition: 'all 0.2s',
+                fontSize: '14px',
+                transition: 'all 0.3s',
               }}
             />
           </div>
@@ -5605,35 +5618,39 @@ function LoginPage({ onLogin }) {
             disabled={isSubmitting || !email.trim() || !password.trim()}
             style={{
               width: '100%',
-              padding: '14px',
-              background: '#FF6B35',
+              padding: '16px',
+              background: 'linear-gradient(135deg, #FF6B35, #E85A25)',
               border: 'none',
-              borderRadius: '6px',
+              borderRadius: '10px',
               color: '#000000',
               fontFamily: F,
-              fontSize: '12px',
-              fontWeight: 700,
+              fontSize: '13px',
+              fontWeight: 900,
               letterSpacing: '2px',
               cursor: isSubmitting ? 'wait' : 'pointer',
-              transition: 'all 0.2s',
-              opacity: isSubmitting ? 0.7 : 1,
+              transition: 'all 0.3s',
+              opacity: isSubmitting ? 0.8 : 1,
               transform: isSubmitting ? 'scale(0.98)' : 'scale(1)',
+              textTransform: 'uppercase',
+              boxShadow: '0 8px 25px rgba(255, 107, 53, 0.3)',
             }}
-            onMouseEnter={(e) => !isSubmitting && (e.target.style.filter = 'brightness(1.15)')}
-            onMouseLeave={(e) => (e.target.style.filter = 'brightness(1)')}
+            onMouseEnter={(e) => !isSubmitting && (e.target.style.boxShadow = '0 12px 35px rgba(255, 107, 53, 0.5)')}
+            onMouseLeave={(e) => (e.target.style.boxShadow = '0 8px 25px rgba(255, 107, 53, 0.3)')}
           >
-            {isSubmitting ? 'ENTRANDO...' : 'ENTRAR AL SISTEMA →'}
+            {isSubmitting ? '⏳ ENTRANDO...' : '→ ENTRAR AL SISTEMA'}
           </button>
         </form>
 
         <div style={{
-          marginTop: '20px',
+          marginTop: '24px',
+          paddingTop: '20px',
+          borderTop: '1px solid rgba(255, 107, 53, 0.15)',
           textAlign: 'center',
-          fontSize: '10px',
-          color: '#444444',
+          fontSize: '11px',
+          color: '#666',
           letterSpacing: '0.5px',
         }}>
-          Demo: cualquier email / contraseña
+          Demo: cualquier email / contraseña | v1.0
         </div>
       </div>
     </div>
@@ -5643,6 +5660,22 @@ function LoginPage({ onLogin }) {
 export default function BarOps() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem('barops_auth'));
 
+  const params = new URLSearchParams(window.location.search);
+  const initialScreen = (params.get('payment') === 'success' || params.get('session_id')) ? 'success' : 'dashboard';
+  const [screen, setScreen] = useState(initialScreen);
+  const [customIngs, setCustomIngs] = useState([]);
+  const [customInv, setCustomInv] = useState([]);
+  const [localName, setLocalName] = useState(
+    localStorage.getItem('barops_local_nombre') ||
+    localStorage.getItem('barops_local_name') ||
+    'Mi Local'
+  );
+  const [showLocalDrawer, setShowLocalDrawer] = useState(false);
+  const [inventoryLoading, setInventoryLoading] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+  const [showMobileDrawer, setShowMobileDrawer] = useState(false);
+  const [showMoreSheet, setShowMoreSheet] = useState(false);
+
   const handleLogin = () => {
     setIsLoggedIn(true);
   };
@@ -5650,20 +5683,6 @@ export default function BarOps() {
   if (!isLoggedIn) {
     return <LoginPage onLogin={handleLogin} />;
   }
-
-  const params = new URLSearchParams(window.location.search);
-  const initialScreen = (params.get('payment') === 'success' || params.get('session_id')) ? 'success' : 'dashboard';
-  const [screen, setScreen]       = useState(initialScreen);
-  const [customIngs, setCustomIngs] = useState([]);
-  const [customInv,  setCustomInv]  = useState([]);
-  const [localName, setLocalName] = useState(
-    localStorage.getItem('barops_local_nombre') ||
-    localStorage.getItem('barops_local_name') ||
-    'Mi Local'
-  );
-  const [showLocalDrawer, setShowLocalDrawer] = useState(false);
-
-  const [inventoryLoading, setInventoryLoading] = useState(true);
 
   // Sincroniza el nombre del local desde Supabase (best-effort, localStorage manda)
   const fetchLocalName = async () => {
@@ -5772,9 +5791,6 @@ export default function BarOps() {
     pricing:    <Pricing/>,
     success:    <PaymentSuccess/>,
   };
-  const [isMobile, setIsMobile] = useState(false);
-  const [showMobileDrawer, setShowMobileDrawer] = useState(false);
-  const [showMoreSheet, setShowMoreSheet] = useState(false);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
