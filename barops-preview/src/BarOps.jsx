@@ -5677,7 +5677,9 @@ export default function BarOps() {
   const [showMoreSheet, setShowMoreSheet] = useState(false);
 
   const handleLogin = () => {
-    setIsLoggedIn(true);
+    setTimeout(() => {
+      setIsLoggedIn(true);
+    }, 100);
   };
 
   if (!isLoggedIn) {
@@ -5781,15 +5783,18 @@ export default function BarOps() {
 
   const ctx = { customIngs, customInv, addFromImport, inventoryLoading, localName, setLocalName, setScreen };
 
-  const SCREENS = {
-    dashboard:  <Dashboard onNavigate={setScreen}/>,
-    inventario: <Inventario/>,
-    staffing:   <Staffing/>,
-    agente:     <AgenteIA/>,
-    analytics:  <Analytics/>,
-    carta:      <Carta/>,
-    pricing:    <Pricing/>,
-    success:    <PaymentSuccess/>,
+  const getScreenComponent = () => {
+    const screens = {
+      dashboard:  <Dashboard onNavigate={setScreen}/>,
+      inventario: <Inventario/>,
+      staffing:   <Staffing/>,
+      agente:     <AgenteIA/>,
+      analytics:  <Analytics/>,
+      carta:      <Carta/>,
+      pricing:    <Pricing/>,
+      success:    <PaymentSuccess/>,
+    };
+    return screens[screen] || screens.dashboard;
   };
 
   useEffect(() => {
@@ -5799,42 +5804,57 @@ export default function BarOps() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  return (
-    <AppCtx.Provider value={ctx}>
-      <div style={{ display:'flex', flexDirection:isMobile?'column':'row', width:'100%', height:'100vh', background:C.bg, overflow:'hidden', fontFamily:F }}>
-        <style>{`
-          *{box-sizing:border-box;}
-          html,body,#root{margin:0;padding:0;width:100%;height:100%;}
-          ::-webkit-scrollbar{width:5px;}
-          ::-webkit-scrollbar-track{background:#0a0a0a;}
-          ::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:3px;}
-          ::-webkit-scrollbar-thumb:hover{background:#444;}
-          input::placeholder{color:#444;font-family:'Courier New',Courier,monospace;}
-          button:not(:disabled):hover{filter:brightness(1.1);}
-          pre{font-family:'Courier New',Courier,monospace !important;}
-          code{font-family:'Courier New',Courier,monospace;}
-          @media (max-width: 1024px) {
-            body { font-size: 14px; }
-          }
-        `}</style>
+  try {
+    return (
+      <AppCtx.Provider value={ctx}>
+        <div style={{ display:'flex', flexDirection:isMobile?'column':'row', width:'100%', height:'100vh', background:C.bg, overflow:'hidden', fontFamily:F }}>
+          <style>{`
+            *{box-sizing:border-box;}
+            html,body,#root{margin:0;padding:0;width:100%;height:100%;}
+            ::-webkit-scrollbar{width:5px;}
+            ::-webkit-scrollbar-track{background:#0a0a0a;}
+            ::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:3px;}
+            ::-webkit-scrollbar-thumb:hover{background:#444;}
+            input::placeholder{color:#444;font-family:'Courier New',Courier,monospace;}
+            button:not(:disabled):hover{filter:brightness(1.1);}
+            pre{font-family:'Courier New',Courier,monospace !important;}
+            code{font-family:'Courier New',Courier,monospace;}
+            @media (max-width: 1024px) {
+              body { font-size: 14px; }
+            }
+          `}</style>
 
-        {!isMobile && <Sidebar active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={()=>setShowLocalDrawer(true)}/>}
+          {!isMobile && <Sidebar active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={()=>setShowLocalDrawer(true)}/>}
 
-        <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', marginTop:isMobile?56:0, paddingBottom:isMobile?60:0 }}>
-          {SCREENS[screen]}
+          <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', marginTop:isMobile?56:0, paddingBottom:isMobile?60:0 }}>
+            {getScreenComponent()}
+          </div>
         </div>
+
+        {isMobile && (
+          <>
+            <MobileTopBar screen={screen} onMenuOpen={() => setShowMobileDrawer(true)} localName={localName} />
+            <MobileBottomNav active={screen} setActive={setScreen} onMoreOpen={() => setShowMoreSheet(true)} />
+            <MobileDrawer isOpen={showMobileDrawer} onClose={() => setShowMobileDrawer(false)} active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={() => { setShowLocalDrawer(true); setShowMobileDrawer(false); }} />
+            <MoreBottomSheet isOpen={showMoreSheet} onClose={() => setShowMoreSheet(false)} setScreen={(s) => { setScreen(s); setShowMoreSheet(false); }} />
+          </>
+        )}
+
+        <LocalDrawer isOpen={showLocalDrawer} onClose={()=>setShowLocalDrawer(false)} localName={localName} onLocalNameChange={setLocalName}/>
+      </AppCtx.Provider>
+    );
+  } catch (error) {
+    console.error('BarOps render error:', error);
+    return (
+      <div style={{ width:'100%', height:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', color:'#FF6B35', fontFamily:F, flexDirection:'column' }}>
+        <div style={{ fontSize:'24px', marginBottom:'16px' }}>⚠️</div>
+        <div style={{ fontSize:'14px', textAlign:'center', maxWidth:'400px' }}>
+          Error al cargar la aplicación. Por favor recarga la página.
+        </div>
+        <button onClick={() => window.location.reload()} style={{ marginTop:'20px', padding:'10px 20px', background:'#FF6B35', color:'#000', border:'none', borderRadius:'4px', cursor:'pointer', fontFamily:F, fontWeight:'bold' }}>
+          Recargar
+        </button>
       </div>
-
-      {isMobile && (
-        <>
-          <MobileTopBar screen={screen} onMenuOpen={() => setShowMobileDrawer(true)} localName={localName} />
-          <MobileBottomNav active={screen} setActive={setScreen} onMoreOpen={() => setShowMoreSheet(true)} />
-          <MobileDrawer isOpen={showMobileDrawer} onClose={() => setShowMobileDrawer(false)} active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={() => { setShowLocalDrawer(true); setShowMobileDrawer(false); }} />
-          <MoreBottomSheet isOpen={showMoreSheet} onClose={() => setShowMoreSheet(false)} setScreen={(s) => { setScreen(s); setShowMoreSheet(false); }} />
-        </>
-      )}
-
-      <LocalDrawer isOpen={showLocalDrawer} onClose={()=>setShowLocalDrawer(false)} localName={localName} onLocalNameChange={setLocalName}/>
-    </AppCtx.Provider>
-  );
+    );
+  }
 }
