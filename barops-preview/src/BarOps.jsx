@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { supabase } from './supabaseClient';
+import { Badge, RiskBadge, ShiftBadge, AvailBadge, StockBar, Stars, Avatar, Toast, Btn, Card, SLabel, TypingDots } from './components/ui';
+import { C, F } from './constants/theme';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -9,362 +11,9 @@ import {
   AlertTriangle, CheckCircle, Clock, TrendingUp, TrendingDown,
   Send, HelpCircle, Plus, Bell, X, Zap, Search,
   ShoppingCart, ChevronDown, ChevronUp, UserCheck,
-  BookOpen, Trash2, CreditCard, Store, Settings, Wine, Menu,
+  BookOpen, Trash2, CreditCard, Store, Settings, Wine, Menu, LogOut, Camera,
+  ClipboardList, Eye, RefreshCw
 } from 'lucide-react';
-
-// ─── TOKENS ───────────────────────────────────────────────────────────────────
-const C = {
-  bg:'#0A0A0A', card:'#111111', cardAlt:'#0D0D0D',
-  border:'#1A1A1A', border2:'#222222',
-  orange:'#FF6B35', teal:'#00D4AA', purple:'#7C3AED',
-  amber:'#F59E0B', red:'#EF4444',
-  text:'#E8E8E8', textSec:'#888888',
-  orangeBg:'#FF6B3515', tealBg:'#00D4AA15',
-  purpleBg:'#7C3AED15', amberBg:'#F59E0B15', redBg:'#EF444415',
-};
-const F = "'Courier New', Courier, monospace";
-
-// Fuzzy search para ingredientes
-const fuzzyMatch = (query, text) => {
-  const q = query.toLowerCase().trim();
-  const t = text.toLowerCase();
-  if (!q) return true;
-  let qIdx = 0, score = 0;
-  for (let i = 0; i < t.length && qIdx < q.length; i++) {
-    if (t[i] === q[qIdx]) { qIdx++; score += 10; }
-    else if (i > 0 && t[i-1] === ' ') score += 1;
-  }
-  return qIdx === q.length ? score : 0;
-};
-
-const filterIngredients = (query, ingredients) => {
-  if (!query.trim()) return ingredients;
-  return ingredients
-    .map(ing => ({ ...ing, score: Math.max(fuzzyMatch(query, ing.name), fuzzyMatch(query, ing.cat)) }))
-    .filter(ing => ing.score > 0)
-    .sort((a,b) => b.score - a.score);
-};
-
-// CSV parser para cócteles
-const parseCocktailsCSV = (raw) => {
-  const lines = raw.trim().split('\n').filter(l=>l.trim());
-  if (lines.length < 2) return { ok:false, items:[], errors:['CSV vacío'] };
-
-  const headerLine = lines[0];
-  const sep = headerLine.includes('\t') ? '\t' : headerLine.includes(';') ? ';' : ',';
-  const headers = headerLine.split(sep).map(h=>h.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''));
-
-  const mapping = {
-    nombre: ['nombre','name','titulo','cocktail','coctel','product','producto'],
-    tipo: ['tipo','type','categoria','category'],
-    descripcion: ['descripcion','description','notas','notes','ingredientes','ingredients','receta'],
-    precio: ['precio','price','venta','sale_price','pvp','cost','coste'],
-  };
-
-  const getCol = (k) => headers.findIndex(h => mapping[k].includes(h));
-  const colNombre = getCol('nombre'), colTipo = getCol('tipo'), colDesc = getCol('descripcion'), colPrecio = getCol('precio');
-
-  if (colNombre < 0 || colPrecio < 0) {
-    return { ok:false, items:[], errors:['Faltan columnas: nombre y precio son obligatorias'] };
-  }
-
-  const items = [], errors = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i].split(sep).map(c=>c.trim());
-    const nombre = cells[colNombre]?.trim();
-    const tipoRaw = colTipo >= 0 ? cells[colTipo]?.trim().toLowerCase() || '' : '';
-    const tipo = ['clasico','clasicos','classic'].includes(tipoRaw) ? 'clasico' : 'autor';
-    const descripcion = colDesc >= 0 ? cells[colDesc]?.trim() || '' : '';
-    const precioStr = cells[colPrecio]?.trim().replace('€','').replace(',','.') || '';
-    const precio = parseFloat(precioStr);
-
-    if (!nombre) { errors.push(`Fila ${i+1}: falta nombre`); continue; }
-    if (!precio || isNaN(precio)) { errors.push(`Fila ${i+1}: precio inválido`); continue; }
-
-    items.push({
-      id: `custom_cocktail_${Date.now()}_${i}`,
-      name: nombre,
-      tipo: tipo,
-      description: descripcion,
-      price: precio,
-      cost: 0,
-      margin: '0',
-      ingredients: [],
-    });
-  }
-
-  return { ok:true, items, errors };
-};
-
-// ─── AGENT SYSTEM PROMPT ──────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `Eres el Agente BarOps de Paradiso Cocktail Bar en Madrid. Eres un analista de negocio experto en hostelería.
-Tienes acceso en tiempo real a los datos del local. Respondes siempre en español, de forma directa y con datos concretos.
-Cuando calcules costes, usa los precios de proveedor exactos. Usa emojis con moderación solo cuando aporten claridad.
-Termina siempre con una recomendación accionable en 1 línea.
-
-== INVENTARIO ACTUAL ==
-- Aperol: 0.8 L → 1 día restante 🔴 CRÍTICO
-- Campari: 1.1 L → 2 días 🔴 CRÍTICO
-- Gin Hendrick's: 2.3 L → 3 días 🔴 CRÍTICO
-- Limones frescos: 28 ud → 4 días 🟡 MEDIO
-- Vermut Martini Rosso: 3.2 L → 12 días
-- Tequila Patrón Silver: 2.9 L → 14 días
-- Cointreau: 1.5 L → 13 días
-- Ron Diplomatico Reserva: 4.8 L → 16 días
-- Whisky Jameson: 5.6 L → 20 días
-- Champagne Moët: 18 bot → 15 días
-
-== PRECIOS PROVEEDOR (Eurocash Madrid) ==
-- Gin Hendrick's 70cl: €15.20 → 4cl = €0.87
-- Campari 1L: €14.90 → 3cl = €0.45
-- Vermut Martini Rosso 1L: €11.30 → 3cl = €0.34
-- Aperol 1L: €11.80 → 6cl = €0.71
-- Tequila Patrón Silver 70cl: €28.40 → 4.5cl = €1.83
-- Ron Diplomatico 70cl: €22.10 → 4cl = €1.26
-- Whisky Jameson 70cl: €17.90 → 4cl = €1.02
-- Cointreau 70cl: €18.60 → 2cl = €0.53
-- Prosecco Zardetto: €6.80/bot
-- Limones: €0.12/ud
-- Hielo operativo: €0.04/coctel
-- Gaseosa/soda: €0.08
-- Guarnición media: €0.09
-
-== RECETAS ESTÁNDAR Y COSTES REALES ==
-- Negroni: Hendricks 4cl + Campari 3cl + Martini 3cl + twist naranja + hielo = €1.78 → venta €12 → margen 85.2%
-- Aperol Spritz: Aperol 6cl + Prosecco 9cl + soda + naranja = €1.42 → venta €10 → margen 85.8%
-- Gin Tonic Hendricks: Hendricks 5cl + tónica premium + pepino = €1.34 → venta €11 → margen 87.8%
-- Old Fashioned: Jameson 6cl + Angostura + azúcar + naranja = €1.67 → venta €13 → margen 87.2%
-- Mojito: Ron Diplomatico 5cl + lime + menta + azúcar + soda = €1.54 → venta €9.50 → margen 83.8%
-- Margarita: Patrón 4.5cl + Cointreau 2cl + lime = €2.36 → venta €12 → margen 80.3%
-- Dry Martini: Hendricks 6cl + Martini 1cl + aceituna = €1.71 → venta €13 → margen 86.8%
-
-== STAFFING SEMANA ACTUAL ==
-Cubiertos: Carlos M. (hoy 18-02), Ana R. (hoy 20-04), Miguel F. (jue 19-01), Laura S. (vie 18-04), David K. (sáb 18-05), Carmen B. (dom 17-00)
-PENDIENTES: Mar 29 Abr 18-02 Bartender Senior, Mar 29 Abr 21-03 Coctelero Clásico, Vie 1 May 20-04 Barback, Sáb 2 May 20-05 Coctelero Clásico
-
-== RED DE TALENTO DISPONIBLE ==
-HOY: Carlos Mendoza ⭐4.9 €16/h, Ana Ruiz ⭐4.7 €14/h, David Kovacs ⭐4.9 €18/h, Rafa Moreno ⭐4.5 €9/h
-ESTE FINDE: Miguel Fernández ⭐4.8 €11/h, Laura Sánchez ⭐5.0 €19/h, Nora Iglesias ⭐4.8 €17/h
-
-== DATOS FINANCIEROS ==
-- Merma este mes: €710 (era €1.850/mes antes de BarOps en noviembre)
-- Ahorro acumulado 6 meses: €7.240
-- ROI BarOps este mes: 5.7x (€199 coste → €1.140 ahorro)
-- Ticket medio Paradiso: €28
-- Servicio medio finde: 85-110 personas`;
-
-// ─── DATA ─────────────────────────────────────────────────────────────────────
-const INVENTORY = [
-  { id:1,  name:"Aperol",               cat:"Aperitivo",    stock:"0.8 L",  pct:8,  weekly:"3.4 L", days:1,  cost:"€0.54", risk:"critical" },
-  { id:2,  name:"Campari",              cat:"Amaro",        stock:"1.1 L",  pct:11, weekly:"2.8 L", days:2,  cost:"€0.62", risk:"critical" },
-  { id:3,  name:"Gin Hendrick's",       cat:"Ginebra",      stock:"2.3 L",  pct:23, weekly:"4.2 L", days:3,  cost:"€0.87", risk:"critical" },
-  { id:4,  name:"Limones frescos",      cat:"Fruta fresca", stock:"28 ud",  pct:31, weekly:"45 ud", days:4,  cost:"€0.12", risk:"medium"   },
-  { id:5,  name:"Vermut Martini Rosso", cat:"Vermut",       stock:"3.2 L",  pct:43, weekly:"1.8 L", days:12, cost:"€0.45", risk:"medium"   },
-  { id:6,  name:"Tequila Patrón Silver",cat:"Tequila",      stock:"2.9 L",  pct:48, weekly:"1.4 L", days:14, cost:"€1.45", risk:"medium"   },
-  { id:7,  name:"Cointreau",            cat:"Triple Seco",  stock:"1.5 L",  pct:50, weekly:"0.8 L", days:13, cost:"€0.78", risk:"medium"   },
-  { id:8,  name:"Ron Diplomatico Rsva", cat:"Ron",          stock:"4.8 L",  pct:68, weekly:"2.1 L", days:16, cost:"€1.23", risk:"stable"   },
-  { id:9,  name:"Whisky Jameson",       cat:"Whisky",       stock:"5.6 L",  pct:75, weekly:"1.9 L", days:20, cost:"€0.98", risk:"stable"   },
-  { id:10, name:"Champagne Moët",       cat:"Espumoso",     stock:"18 bot", pct:90, weekly:"8 bot", days:15, cost:"€8.50", risk:"stable"   },
-];
-
-const OPEN_SHIFTS = [
-  { id:3, date:"Mar 29 Abr", time:"18:00 – 02:00", profile:"Bartender Senior",    status:"searching", cost:"€145", match:["Carlos Mendoza","David Kovacs"]   },
-  { id:4, date:"Mar 29 Abr", time:"21:00 – 03:00", profile:"Coctelero Clásico",   status:"urgent",    cost:"€136", match:["Carlos Mendoza","Laura Sánchez"]  },
-  { id:7, date:"Vie 1 May",  time:"20:00 – 04:00", profile:"Barback / Ayudante",  status:"searching", cost:"€72",  match:["Rafa Moreno"]                     },
-  { id:9, date:"Sáb 2 May",  time:"20:00 – 05:00", profile:"Coctelero Clásico",   status:"urgent",    cost:"€152", match:["Laura Sánchez","Carlos Mendoza"]  },
-];
-
-const COVERED_SHIFTS = [
-  { id:1, date:"Hoy, 28 Abr", time:"18:00 – 02:00", profile:"Bartender Coctelería", pro:"Carlos M.", cost:"€128", rating:4.9 },
-  { id:2, date:"Hoy, 28 Abr", time:"20:00 – 04:00", profile:"Camarero Sala",         pro:"Ana R.",    cost:"€96",  rating:4.7 },
-  { id:5, date:"Jue 30 Abr",  time:"19:00 – 01:00", profile:"Camarero Barras",       pro:"Miguel F.", cost:"€88",  rating:4.8 },
-  { id:6, date:"Vie 1 May",   time:"18:00 – 04:00", profile:"Bartender Coctelería",  pro:"Laura S.",  cost:"€152", rating:5.0 },
-  { id:8, date:"Sáb 2 May",   time:"18:00 – 05:00", profile:"Bartender Senior",      pro:"David K.",  cost:"€168", rating:4.9 },
-  { id:10,date:"Dom 3 May",   time:"17:00 – 00:00", profile:"Camarero Sala",          pro:"Carmen B.", cost:"€84",  rating:4.6 },
-];
-
-const TALENT = [
-  { id:1, name:"Carlos Mendoza",   ini:"CM", spec:"Coctelería Clásica", rating:4.9, rate:"€16/h", avail:"today",       tags:["Negroni","Old Fashioned","Gin Tonics"] },
-  { id:2, name:"Ana Ruiz",         ini:"AR", spec:"Mixología Creativa", rating:4.7, rate:"€14/h", avail:"today",       tags:["Mocktails","Bar Show","Premium"]       },
-  { id:5, name:"David Kovacs",     ini:"DK", spec:"Bartender Flair",    rating:4.9, rate:"€18/h", avail:"today",       tags:["Flair","Tropical","Espectáculo"]       },
-  { id:7, name:"Rafa Moreno",      ini:"RM", spec:"Barback Senior",     rating:4.5, rate:"€9/h",  avail:"today",       tags:["Mise en place","Soporte","Limpieza"]   },
-  { id:3, name:"Miguel Fernández", ini:"MF", spec:"Camarero de Sala",   rating:4.8, rate:"€11/h", avail:"weekend",     tags:["Vinos","Servicio mesa","TPV"]          },
-  { id:4, name:"Laura Sánchez",    ini:"LS", spec:"Head Bartender",     rating:5.0, rate:"€19/h", avail:"weekend",     tags:["Cartas","Formación","Cost control"]    },
-  { id:8, name:"Nora Iglesias",    ini:"NI", spec:"Sumiller",           rating:4.8, rate:"€17/h", avail:"weekend",     tags:["Vinos","Champagne","Maridaje"]         },
-  { id:6, name:"Carmen Blanco",    ini:"CB", spec:"Camarera de Sala",   rating:4.6, rate:"€10/h", avail:"unavailable", tags:["Idiomas","Eventos","Protocolo"]        },
-];
-
-const MERMA_DATA = [
-  { m:"Nov", antes:1850, despues:1850 },
-  { m:"Dic", antes:2100, despues:1620 },
-  { m:"Ene", antes:1950, despues:1380 },
-  { m:"Feb", antes:2050, despues:1120 },
-  { m:"Mar", antes:1900, despues:890  },
-  { m:"Abr", antes:2150, despues:710  },
-];
-const CAT_DATA = [
-  { n:"Ginebras",v:4850 },{ n:"Espumosos",v:3400 },{ n:"Rones",v:3200 },
-  { n:"Whisky",v:2800 }, { n:"Tequila",v:2100 }, { n:"Vermuts",v:1900 },
-  { n:"Aperitivos",v:1650 },{ n:"Misc",v:1200 },
-];
-const TOP_PRODUCTS = [
-  { name:"Gin Tonic Hendrick's", cat:"Combinado", cost:"€1.34",price:"€11.00",margin:"87.8%",units:521 },
-  { name:"Dry Martini",          cat:"Cóctel",    cost:"€1.71",price:"€13.00",margin:"86.8%",units:198 },
-  { name:"Old Fashioned",        cat:"Cóctel",    cost:"€1.67",price:"€13.00",margin:"87.2%",units:156 },
-  { name:"Negroni",              cat:"Cóctel",    cost:"€1.78",price:"€12.00",margin:"85.2%",units:312 },
-  { name:"Aperol Spritz",        cat:"Aperitivo", cost:"€1.42",price:"€10.00",margin:"85.8%",units:428 },
-  { name:"Mojito",               cat:"Cóctel",    cost:"€1.54",price:"€9.50", margin:"83.8%",units:384 },
-  { name:"Whisky Jameson Solo",  cat:"Destilado", cost:"€1.02",price:"€8.00", margin:"87.3%",units:267 },
-  { name:"Margarita",            cat:"Cóctel",    cost:"€2.36",price:"€12.00",margin:"80.3%",units:187 },
-  { name:"Cosmopolitan",         cat:"Cóctel",    cost:"€2.42",price:"€12.50",margin:"80.6%",units:143 },
-  { name:"Champagne Moët Copa",  cat:"Espumoso",  cost:"€8.50",price:"€18.00",margin:"52.8%",units:89  },
-];
-
-// ─── CARTA DATA ───────────────────────────────────────────────────────────────
-const INGREDIENTS_DB = [
-  // Ginebras
-  { id:'hendricks',    name:"Gin Hendrick's",         unit:'ml',  cpu:0.217, cat:'Ginebra'     },
-  { id:'tanqueray',    name:"Gin Tanqueray",           unit:'ml',  cpu:0.186, cat:'Ginebra'     },
-  { id:'bombay',       name:"Gin Bombay Sapphire",    unit:'ml',  cpu:0.162, cat:'Ginebra'     },
-  { id:'nordes',       name:"Gin Nordés",              unit:'ml',  cpu:0.228, cat:'Ginebra'     },
-  // Rones
-  { id:'ron_dip',      name:"Ron Diplomatico Rsva",   unit:'ml',  cpu:0.316, cat:'Ron'         },
-  { id:'ron_brugal',   name:"Ron Brugal Añejo",       unit:'ml',  cpu:0.198, cat:'Ron'         },
-  { id:'ron_zacapa',   name:"Ron Zacapa 23",          unit:'ml',  cpu:0.412, cat:'Ron'         },
-  // Tequila & Mezcal
-  { id:'patron',       name:"Tequila Patrón Silver",  unit:'ml',  cpu:0.406, cat:'Tequila'     },
-  { id:'jimador',      name:"Tequila El Jimador",     unit:'ml',  cpu:0.198, cat:'Tequila'     },
-  { id:'mezcal_del',   name:"Mezcal Del Maguey",      unit:'ml',  cpu:0.486, cat:'Mezcal'      },
-  // Whisky
-  { id:'jameson',      name:"Whisky Jameson",         unit:'ml',  cpu:0.256, cat:'Whisky'      },
-  { id:'monkey',       name:"Monkey Shoulder",        unit:'ml',  cpu:0.282, cat:'Whisky'      },
-  { id:'bulleit_rye',  name:"Bulleit Rye",            unit:'ml',  cpu:0.312, cat:'Whisky'      },
-  // Aperitivos & Amari
-  { id:'campari',      name:"Campari",                 unit:'ml',  cpu:0.149, cat:'Amaro'       },
-  { id:'aperol',       name:"Aperol",                  unit:'ml',  cpu:0.118, cat:'Aperitivo'   },
-  { id:'cynar',        name:"Cynar",                   unit:'ml',  cpu:0.168, cat:'Amaro'       },
-  { id:'fernet',       name:"Fernet Branca",           unit:'ml',  cpu:0.182, cat:'Amaro'       },
-  // Vermuts
-  { id:'martini_r',    name:"Vermut Martini Rosso",   unit:'ml',  cpu:0.113, cat:'Vermut'      },
-  { id:'martini_b',    name:"Vermut Martini Bianco",  unit:'ml',  cpu:0.108, cat:'Vermut'      },
-  { id:'noilly',       name:"Noilly Prat Dry",        unit:'ml',  cpu:0.138, cat:'Vermut'      },
-  // Licores
-  { id:'cointreau',    name:"Cointreau",                unit:'ml',  cpu:0.266, cat:'Triple Seco' },
-  { id:'licor43',      name:"Licor 43",                 unit:'ml',  cpu:0.192, cat:'Licor'       },
-  { id:'kahlua',       name:"Kahlúa",                   unit:'ml',  cpu:0.195, cat:'Licor'       },
-  { id:'baileys',      name:"Baileys",                  unit:'ml',  cpu:0.178, cat:'Crema'       },
-  { id:'amaretto',     name:"Amaretto Disaronno",      unit:'ml',  cpu:0.213, cat:'Licor'       },
-  { id:'st_germain',   name:"St-Germain Elderflower",  unit:'ml',  cpu:0.312, cat:'Licor'       },
-  { id:'chartreuse_v', name:"Chartreuse Verde",        unit:'ml',  cpu:0.428, cat:'Licor'       },
-  // Espumosos
-  { id:'prosecco',     name:"Prosecco Zardetto",      unit:'ml',  cpu:0.091, cat:'Espumoso'    },
-  { id:'cava',         name:"Cava Brut",               unit:'ml',  cpu:0.062, cat:'Espumoso'    },
-  // Mixers
-  { id:'tonica_prem',  name:"Tónica Premium (25cl)",  unit:'ml',  cpu:0.025, cat:'Mixer'       },
-  { id:'ginger_beer',  name:"Ginger Beer",             unit:'ml',  cpu:0.028, cat:'Mixer'       },
-  { id:'soda',         name:"Soda",                    unit:'ml',  cpu:0.008, cat:'Mixer'       },
-  { id:'cola',         name:"Coca-Cola",                unit:'ml',  cpu:0.012, cat:'Mixer'       },
-  { id:'agua_coco',    name:"Agua de coco",            unit:'ml',  cpu:0.034, cat:'Mixer'       },
-  // Zumos frescos
-  { id:'zumo_limon',   name:"Zumo limón fresco",      unit:'ml',  cpu:0.018, cat:'Fresco'      },
-  { id:'zumo_lima',    name:"Zumo lima fresco",        unit:'ml',  cpu:0.021, cat:'Fresco'      },
-  { id:'zumo_naranja', name:"Zumo naranja fresco",     unit:'ml',  cpu:0.015, cat:'Fresco'      },
-  { id:'zumo_pina',    name:"Zumo piña natural",       unit:'ml',  cpu:0.022, cat:'Fresco'      },
-  { id:'zumo_cranb',   name:"Zumo cranberry",          unit:'ml',  cpu:0.019, cat:'Zumo'        },
-  { id:'zumo_frutos',  name:"Zumo frutos rojos",      unit:'ml',  cpu:0.026, cat:'Zumo'        },
-  // Siropes
-  { id:'sirope_az',    name:"Sirope de azúcar",        unit:'ml',  cpu:0.012, cat:'Sirope'      },
-  { id:'grenadine',    name:"Granadina",                unit:'ml',  cpu:0.016, cat:'Sirope'      },
-  { id:'orgeat',       name:"Orgeat / Almendra",       unit:'ml',  cpu:0.028, cat:'Sirope'      },
-  { id:'sirope_mango', name:"Sirope de mango",         unit:'ml',  cpu:0.024, cat:'Sirope'      },
-  { id:'sirope_vainilla',name:"Sirope de vainilla",    unit:'ml',  cpu:0.022, cat:'Sirope'      },
-  { id:'miel',         name:"Sirope de miel",          unit:'ml',  cpu:0.032, cat:'Sirope'      },
-  // Guarniciones
-  { id:'garn_limon',   name:"Limón (twist/rodaja)",    unit:'ud',  cpu:0.12,  cat:'Guarnición'  },
-  { id:'garn_naranja', name:"Naranja (twist/media)",   unit:'ud',  cpu:0.09,  cat:'Guarnición'  },
-  { id:'garn_lima',    name:"Lima (twist/rodaja)",     unit:'ud',  cpu:0.14,  cat:'Guarnición'  },
-  { id:'menta',        name:"Menta fresca (rama)",     unit:'ud',  cpu:0.08,  cat:'Guarnición'  },
-  { id:'oliva',        name:"Aceituna cocktail",       unit:'ud',  cpu:0.05,  cat:'Guarnición'  },
-  { id:'cereza',       name:"Cereza marrasquino",      unit:'ud',  cpu:0.12,  cat:'Guarnición'  },
-  { id:'pepino',       name:"Pepino (rodaja)",         unit:'ud',  cpu:0.06,  cat:'Guarnición'  },
-  // Operativos
-  { id:'hielo',        name:"Hielo (coste operativo)", unit:'uso', cpu:0.04,  cat:'Operativo'   },
-  { id:'sal_borde',    name:"Sal / azúcar borde",      unit:'uso', cpu:0.03,  cat:'Operativo'   },
-  { id:'clara_huevo',  name:"Clara de huevo",          unit:'uso', cpu:0.08,  cat:'Operativo'   },
-];
-
-const CLASSIC_COCKTAILS_DATA = [
-  { id:'negroni',      name:"Negroni",              cost:1.78, price:12.00, margin:"85.2", description:"Hendrick's · Campari · Martini Rosso",        ings:[{n:"Gin Hendrick's 4 cl"},{n:"Campari 3 cl"},{n:"Vermut Martini Rosso 3 cl"},{n:"Twist naranja"},{n:"Hielo"}] },
-  { id:'spritz',       name:"Aperol Spritz",         cost:1.42, price:10.00, margin:"85.8", description:"Aperol · Prosecco · Soda · Naranja",          ings:[{n:"Aperol 6 cl"},{n:"Prosecco 9 cl"},{n:"Soda 2 cl"},{n:"Rodaja naranja"}] },
-  { id:'gintonic',     name:"Gin Tonic Hendrick's",  cost:1.34, price:11.00, margin:"87.8", description:"Hendrick's · Tónica Premium · Pepino",        ings:[{n:"Gin Hendrick's 5 cl"},{n:"Tónica Premium 15 cl"},{n:"Pepino (rodaja)"}] },
-  { id:'old_fashioned',name:"Old Fashioned",         cost:1.67, price:13.00, margin:"87.2", description:"Jameson · Angostura · Azúcar · Naranja",      ings:[{n:"Whisky Jameson 6 cl"},{n:"Angostura 2 dashes"},{n:"Azúcar (terrón)"},{n:"Twist naranja"},{n:"Hielo"}] },
-  { id:'mojito',       name:"Mojito",                cost:1.54, price:9.50,  margin:"83.8", description:"Ron Diplomatico · Lima · Menta · Soda",       ings:[{n:"Ron Diplomatico 5 cl"},{n:"Zumo lima 2 cl"},{n:"Menta fresca"},{n:"Sirope azúcar 1 cl"},{n:"Soda 8 cl"}] },
-  { id:'margarita',    name:"Margarita",              cost:2.36, price:12.00, margin:"80.3", description:"Patrón Silver · Cointreau · Lima · Sal",      ings:[{n:"Patrón Silver 4.5 cl"},{n:"Cointreau 2 cl"},{n:"Zumo lima 2 cl"},{n:"Sal borde"}] },
-  { id:'dry_martini',  name:"Dry Martini",           cost:1.71, price:13.00, margin:"86.8", description:"Hendrick's · Vermut Bianco · Aceituna",       ings:[{n:"Gin Hendrick's 6 cl"},{n:"Vermut Martini Bianco 1 cl"},{n:"Aceituna"},{n:"Hielo"}] },
-  { id:'cosmo',        name:"Cosmopolitan",           cost:2.42, price:12.50, margin:"80.6", description:"Patrón Silver · Cointreau · Cranberry · Lima",ings:[{n:"Patrón Silver 4 cl"},{n:"Cointreau 1.5 cl"},{n:"Zumo cranberry 3 cl"},{n:"Zumo lima 1.5 cl"}] },
-];
-
-const marginColor = (m) => {
-  const n = parseFloat(m);
-  return n >= 80 ? C.teal : n >= 65 ? C.amber : '#EF4444';
-};
-
-const INITIAL_CHAT = [
-  { id:1, role:"user",  time:"14:23", text:"¿Qué me va a faltar este fin de semana?" },
-  {
-    id:2, role:"agent", time:"14:23",
-    text:`Analizado tu historial de 8 semanas + reservas del finde. 3 críticos y 2 preventivos:
-
-🔴 CRÍTICO — Aperol (0.8 L): consumo estimado 6.2 L. Sin stock el viernes a las 22h
-🔴 CRÍTICO — Campari (1.1 L): estimado 4.8 L. Sin stock sábado al mediodía
-🔴 CRÍTICO — Gin Hendrick's (2.3 L): tres grupos con cumpleaños el sábado, estimado 7.4 L
-🟡 PREVENTIVO — Limones frescos (28 ud): necesitas mínimo 85 ud viernes + sábado
-🟡 PREVENTIVO — Vermut Martini Rosso: ajustado si el Negroni sale como el sábado pasado
-
-→ Haz el pedido antes del jueves en Eurocash Madrid (Vallecas). ¿Genero la lista completa?`,
-  },
-  { id:3, role:"user",  time:"14:25", text:"¿Cuánto me cuesta de verdad un Negroni?" },
-  {
-    id:4, role:"agent", time:"14:25",
-    text:`Calculado con tus precios de proveedor actuales:
-
-NEGRONI — Desglose coste real:
-  • Gin Hendrick's 4 cl  →  €0.87
-  • Campari 3 cl          →  €0.45
-  • Martini Rosso 3 cl    →  €0.34
-  • Naranja / twist       →  €0.08
-  • Hielo rotatorio       →  €0.04
-
-COSTE TOTAL → €1.78 | PRECIO CARTA → €12.00 | MARGEN → 85.2%
-
-⚡ Tu teórico era €1.61. La diferencia (+€0.17) es merma en cítricos y derrame en Campari. ~€53/mes de pérdida silenciosa solo en Negronis.`,
-  },
-];
-
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
-function getNow() {
-  return new Date().toLocaleTimeString('es-ES',{ hour:'2-digit', minute:'2-digit' });
-}
-
-async function callClaude(history) {
-  const res = await fetch('/api/anthropic/v1/messages', {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({
-      model:'claude-sonnet-4-6',
-      max_tokens:1024,
-      system: SYSTEM_PROMPT,
-      messages: history.map(m=>({ role:m.role==='agent'?'assistant':'user', content:m.text })),
-    }),
-  });
-  if (!res.ok) {
-    if (res.status===401||res.status===403) throw new Error('API_KEY_MISSING');
-    const err = await res.json().catch(()=>({}));
-    throw new Error(err.error?.message||`HTTP ${res.status}`);
-  }
-  const data = await res.json();
-  return data.content[0].text;
-}
 
 // ─── APP CONTEXT ──────────────────────────────────────────────────────────────
 const AppCtx = React.createContext(null);
@@ -373,10 +22,10 @@ const useApp = () => React.useContext(AppCtx);
 // ─── CSV IMPORT ───────────────────────────────────────────────────────────────
 const TEMPLATE_CSV = `nombre,categoria,stock,unidad,precio,volumen_cl
 Gin Hendrick's,Ginebra,3,bot,15.20,70
-Campari,Amaro,2,bot,14.90,100
-Ron Diplomatico Reserva,Ron,5,bot,22.10,70
+Estrella Galicia 30L,Cerveza,4,barril,65.00,3000
+Croquetas Caseras,Tapas,45,racion,1.20,
+Calamares Romana,Tapas,20,racion,2.50,
 Limones frescos,Fruta fresca,80,ud,0.12,
-Tónica Premium 25cl,Mixer,24,ud,0.65,
 Sirope de azúcar,Sirope,6,bot,4.80,100
 `;
 
@@ -423,6 +72,17 @@ function parseCSV(raw) {
       const vol=volRaw>0?volRaw:100;
       unit='cl'; cpu=priceRaw/vol;
       stockStr=`${stockQty} cl`; pct=Math.min(100,Math.round(stockQty/2)); days=Math.min(90,Math.round(stockQty/10));
+    } else if (['barril','barriles','keg'].includes(unitRaw)) {
+      const vol = volRaw > 0 ? volRaw : 3000; // Por defecto 30L = 3000cl
+      unit = 'cl'; cpu = priceRaw / vol;
+      stockStr = `${stockQty} barril${stockQty===1?'':'es'}`; 
+      pct = Math.min(100, Math.round(stockQty * 50)); 
+      days = Math.min(90, Math.round(stockQty * 15));
+    } else if (['racion','raciones','tapa','tapas','porcion','porciones'].includes(unitRaw)) {
+      unit = 'ud'; cpu = priceRaw;
+      stockStr = `${stockQty} rac.`; 
+      pct = Math.min(100, Math.round(stockQty * 5)); 
+      days = Math.min(90, Math.round(stockQty * 2));
     } else if (['kg','kilo','kilos'].includes(unitRaw)) {
       unit='ud'; cpu=priceRaw/1000;
       stockStr=`${stockQty} kg`; pct=Math.min(100,Math.round(stockQty*10)); days=Math.min(90,Math.round(stockQty*5));
@@ -439,13 +99,62 @@ function parseCSV(raw) {
       id:`imp_${safeId}_${r}`,
       name, cat, unit,
       cpu:Math.round(cpu*10000)/10000,
-      stock:stockStr, pct, days, risk,
+      stock:stockStr, rawStock: stockQty, pct, days, risk,
       weekly:'', cost:`€${cpu.toFixed(3)}`,
     });
   }
   return { ok:true, items:results, errors };
 }
 
+
+// ─── MOCK DATA: STAFFING ──────────────────────────────────────────────────────
+const OPEN_SHIFTS = [
+  { id:'s1', profile:'Bartender Senior', date:'Sáb 3 May', time:'21:00–03:00', cost:'€120', status:'urgent', match:['Laura Sánchez','Carlos Ruiz'] },
+  { id:'s2', profile:'Camarero/a',       date:'Vie 2 May', time:'20:00–02:00', cost:'€90',  status:'urgent', match:['Ana López','Miguel Torres'] },
+  { id:'s3', profile:'Bartender Junior',  date:'Dom 4 May', time:'18:00–00:00', cost:'€80',  status:'open',   match:['Carlos Ruiz','Sofía Méndez'] },
+];
+const COVERED_SHIFTS = [
+  { id:'c1', profile:'Bartender Senior', date:'Jue 1 May', time:'20:00–02:00', cost:'€120', assigned:'Laura Sánchez', pro:'Laura Sánchez', rating:5.0 },
+  { id:'c2', profile:'Camarero/a',       date:'Jue 1 May', time:'19:00–01:00', cost:'€90',  assigned:'Ana López',      pro:'Ana López',      rating:4.8 },
+  { id:'c3', profile:'Runner',           date:'Sáb 3 May', time:'21:00–03:00', cost:'€70',  assigned:'Miguel Torres',  pro:'Miguel Torres',  rating:4.2 },
+];
+const TALENT = [
+  { id:'t1', name:'Laura Sánchez', ini:'LS', role:'Bartender Senior', rating:5.0, rate:'€19/h', cost:'€19/h', avail:'today', img:null, spec:'Coctelería clásica', shifts:28, tags:['Coctelería','Clásica','Alto volumen'] },
+  { id:'t2', name:'Carlos Ruiz',   ini:'CR', role:'Bartender Junior', rating:4.5, rate:'€14/h', cost:'€14/h', avail:'today', img:null, spec:'Coctelería molecular', shifts:15, tags:['Molecular','Flair','Creativo'] },
+  { id:'t3', name:'Ana López',     ini:'AL', role:'Camarera',         rating:4.8, rate:'€13/h', cost:'€13/h', avail:'today', img:null, spec:'Servicio en barra', shifts:32, tags:['Barra','Sala','Eventos'] },
+  { id:'t4', name:'Miguel Torres', ini:'MT', role:'Runner / Barback', rating:4.2, rate:'€11/h', cost:'€11/h', avail:'weekend',   img:null, spec:'Logística de sala', shifts:12, tags:['Runner','Logística','Nocturno'] },
+  { id:'t5', name:'Sofía Méndez',  ini:'SM', role:'Bartender Junior', rating:4.0, rate:'€14/h', cost:'€14/h', avail:'weekend',   img:null, spec:'Cócteles de autor', shifts:8, tags:['Autor','Creativo','Sostenible'] },
+];
+
+// ─── MOCK DATA: AGENTE IA ─────────────────────────────────────────────────────
+const getNow = () => new Date().toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' });
+const INITIAL_CHAT = [
+  { id:1, role:'agent', time:'ahora', text:'👋 Hola, soy el **Agente BarOps**. Tengo acceso en tiempo real a tu inventario, ventas y equipo.\n\nPregúntame lo que necesites o usa las sugerencias rápidas de abajo.' },
+];
+
+// ─── MOCK DATA: CARTA (INGREDIENTS) ──────────────────────────────────────────
+const INGREDIENTS_DB = [
+  { id:'ing1', name:'Ginebra London Dry', unit:'cl', cost:0.18 },
+  { id:'ing2', name:'Tónica Premium',     unit:'ud', cost:1.20 },
+  { id:'ing3', name:'Limón fresco',       unit:'ud', cost:0.15 },
+  { id:'ing4', name:'Hielo',              unit:'kg', cost:0.50 },
+  { id:'ing5', name:'Ron Blanco',         unit:'cl', cost:0.14 },
+  { id:'ing6', name:'Zumo de lima',       unit:'cl', cost:0.08 },
+  { id:'ing7', name:'Azúcar',             unit:'g',  cost:0.002 },
+  { id:'ing8', name:'Menta fresca',       unit:'ud', cost:0.10 },
+  { id:'ing9', name:'Vodka Premium',      unit:'cl', cost:0.22 },
+  { id:'ing10', name:'Aperol',            unit:'cl', cost:0.16 },
+  { id:'ing11', name:'Prosecco',          unit:'cl', cost:0.12 },
+  { id:'ing12', name:'Campari',           unit:'cl', cost:0.20 },
+  { id:'ing13', name:'Vermut Rojo',       unit:'cl', cost:0.10 },
+  { id:'ing14', name:'Soda',              unit:'cl', cost:0.03 },
+  { id:'ing15', name:'Triple Sec',        unit:'cl', cost:0.12 },
+  { id:'ing16', name:'Tequila Blanco',    unit:'cl', cost:0.25 },
+  { id:'ing17', name:'Whisky Bourbon',    unit:'cl', cost:0.20 },
+  { id:'ing18', name:'Angostura',         unit:'dash', cost:0.05 },
+];
+
+const marginColor = (m) => m >= 70 ? C.teal : m >= 50 ? C.amber : '#EF4444';
 
 // ─── HELPER FUNCTIONS ─────────────────────────────────────────────────────────
 const getInitials = (name) => {
@@ -476,128 +185,9 @@ const getPublicLogoUrl = (filename) => {
 };
 
 // ─── ATOMS ────────────────────────────────────────────────────────────────────
-function Badge({ label, color, bg }) {
-  return (
-    <span style={{
-      display:'inline-flex', alignItems:'center', padding:'3px 8px',
-      borderRadius:'2px', fontSize:'10px', fontFamily:F,
-      letterSpacing:'1.5px', fontWeight:700,
-      color, background:bg, border:`1px solid ${color}44`, whiteSpace:'nowrap',
-    }}>
-      {label}
-    </span>
-  );
-}
-function RiskBadge({ risk }) {
-  const M = { critical:{label:'CRÍTICO',color:'#EF4444',bg:'#EF444415'}, medium:{label:'MEDIO',color:C.amber,bg:C.amberBg}, stable:{label:'ESTABLE',color:C.teal,bg:C.tealBg} };
-  const m = M[risk]||M.stable;
-  return <Badge label={m.label} color={m.color} bg={m.bg}/>;
-}
-function ShiftBadge({ status }) {
-  const M = { covered:{label:'CUBIERTO',color:C.teal,bg:C.tealBg}, searching:{label:'BUSCANDO',color:C.amber,bg:C.amberBg}, urgent:{label:'URGENTE',color:'#EF4444',bg:'#EF444415'} };
-  const m = M[status]||M.searching;
-  return <Badge label={m.label} color={m.color} bg={m.bg}/>;
-}
-function AvailBadge({ avail }) {
-  const M = { today:{label:'DISPONIBLE HOY',color:C.teal,bg:C.tealBg}, weekend:{label:'ESTE FINDE',color:C.amber,bg:C.amberBg}, unavailable:{label:'NO DISPONIBLE',color:C.textSec,bg:'#88888815'} };
-  const m = M[avail]||M.unavailable;
-  return <Badge label={m.label} color={m.color} bg={m.bg}/>;
-}
-function StockBar({ pct }) {
-  const color = pct<20?'#EF4444':pct<45?C.amber:C.teal;
-  return (
-    <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
-      <div style={{ width:72, height:5, background:'#2a2a2a', borderRadius:3, overflow:'hidden' }}>
-        <div style={{ width:`${pct}%`, height:'100%', background:color, borderRadius:3 }}/>
-      </div>
-      <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec, minWidth:28 }}>{pct}%</span>
-    </div>
-  );
-}
-function Stars({ rating }) {
-  return (
-    <span style={{ fontFamily:F, fontSize:'12px' }}>
-      <span style={{ color:C.amber }}>{'★'.repeat(Math.floor(rating))}</span>
-      <span style={{ color:'#2a2a2a' }}>{'★'.repeat(5-Math.floor(rating))}</span>
-      <span style={{ color:C.textSec, marginLeft:5, fontSize:'11px' }}>{rating}</span>
-    </span>
-  );
-}
-function Avatar({ ini, size=44 }) {
-  return (
-    <div style={{
-      width:size, height:size, borderRadius:4, flexShrink:0,
-      background:`linear-gradient(135deg,${C.orange}22,${C.purple}22)`,
-      border:`1px solid ${C.orange}44`,
-      display:'flex', alignItems:'center', justifyContent:'center',
-      fontFamily:F, fontSize:size>36?'13px':'11px', fontWeight:700, color:C.orange, letterSpacing:'1px',
-    }}>
-      {ini}
-    </div>
-  );
-}
-function Toast({ msg, onClose }) {
-  useEffect(()=>{ const t=setTimeout(onClose,3200); return ()=>clearTimeout(t); },[onClose]);
-  return (
-    <div style={{
-      position:'fixed', bottom:28, right:28, zIndex:9999,
-      background:C.teal, color:'#000', padding:'12px 20px',
-      borderRadius:4, fontFamily:F, fontSize:'12px', letterSpacing:'1.5px', fontWeight:700,
-      boxShadow:`0 4px 28px ${C.teal}55`,
-      display:'flex', alignItems:'center', gap:12,
-    }}>
-      <CheckCircle size={15}/>{msg}
-      <X size={13} style={{ cursor:'pointer', opacity:.7 }} onClick={onClose}/>
-    </div>
-  );
-}
-function Btn({ children, onClick, variant='primary', disabled=false, sx={} }) {
-  const V = {
-    primary: { background:C.orange,   color:'#000',       border:'none'                        },
-    outline: { background:'transparent',color:C.orange,   border:`1px solid ${C.orange}66`     },
-    ghost:   { background:'transparent',color:C.textSec,  border:`1px solid ${C.border2}`      },
-    teal:    { background:C.teal,      color:'#000',       border:'none'                        },
-    danger:  { background:'transparent',color:'#EF4444',  border:`1px solid #EF444444`         },
-    purple:  { background:C.purpleBg,  color:C.purple,     border:`1px solid ${C.purple}44`    },
-  };
-  return (
-    <button onClick={disabled?undefined:onClick} style={{
-      fontFamily:F, fontWeight:700, letterSpacing:'1.5px', borderRadius:2,
-      cursor:disabled?'default':'pointer', fontSize:'10px', padding:'7px 14px',
-      display:'inline-flex', alignItems:'center', gap:6,
-      opacity:disabled?.4:1, transition:'filter 0.15s',
-      ...V[variant], ...sx,
-    }}>
-      {children}
-    </button>
-  );
-}
-function Card({ children, accent, sx={}, ...props }) {
-  return (
-    <div style={{
-      background:C.card, border:`1px solid ${accent?accent+'33':C.border2}`,
-      borderRadius:4, fontFamily:F, ...sx,
-    }} {...props}>
-      {children}
-    </div>
-  );
-}
-function SLabel({ label, color=C.orange, icon:Icon }) {
-  return (
-    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
-      {Icon&&<Icon size={13} color={color}/>}
-      <span style={{ fontFamily:F, fontSize:'11px', color, letterSpacing:'3px', fontWeight:700 }}>{label}</span>
-    </div>
-  );
-}
-function TypingDots() {
-  const [d,setD] = useState(0);
-  useEffect(()=>{ const t=setInterval(()=>setD(p=>(p+1)%4),380); return ()=>clearInterval(t); },[]);
-  return <span style={{ fontFamily:F, fontSize:'20px', color:C.teal, letterSpacing:6 }}>{'●'.repeat(d+1)}{'○'.repeat(3-d)}</span>;
-}
-
+// (Atoms extracted to src/components/ui/index.jsx)
 // ─── SIDEBAR ──────────────────────────────────────────────────────────────────
-function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
+function Sidebar({ active, setActive, localName, onOpenLocalSettings, onLogout }) {
   const [mobile, setMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [localPhoto, setLocalPhoto] = useState(localStorage.getItem('barops_local_photo') || '');
@@ -609,14 +199,19 @@ function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  const { userRole, cartItems, setShowCartDrawer } = useApp() || {};
+
   const NAV = [
     { id:'dashboard',  Icon:LayoutDashboard, label:'DASHBOARD'  },
     { id:'inventario', Icon:Package,         label:'INVENTARIO' },
-    { id:'staffing',   Icon:Users,           label:'STAFFING'   },
+    { id:'historial',  Icon:ClipboardList,   label:'PEDIDOS'    },
+    ...(userRole === 'manager' ? [
+      { id:'staffing',   Icon:Users,           label:'STAFFING'   },
+      { id:'analytics',  Icon:BarChart2,       label:'ANALYTICS'  },
+      { id:'pricing',    Icon:CreditCard,      label:'BILLING'    },
+    ] : []),
     { id:'agente',     Icon:Bot,             label:'AGENTE IA'  },
-    { id:'analytics',  Icon:BarChart2,       label:'ANALYTICS'  },
     { id:'carta',      Icon:BookOpen,        label:'CARTA'      },
-    { id:'pricing',    Icon:CreditCard,      label:'BILLING'    },
   ];
 
   const handleNavClick = (id) => {
@@ -627,8 +222,11 @@ function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
   const sidebarContent = (
     <>
       <div style={{ padding:'24px 22px 20px', borderBottom:`1px solid ${C.border2}` }}>
-        <div style={{ fontFamily:F, fontSize:'24px', fontWeight:700, color:C.orange, letterSpacing:'7px', lineHeight:1 }}>BAROPS</div>
-        <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'3px', marginTop:5 }}>SISTEMA OPERATIVO</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <img src="/logo.png" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} alt="Logo" />
+          <div style={{ fontFamily:F, fontSize:'24px', fontWeight:700, color:C.orange, letterSpacing:'7px', lineHeight:1 }}>BAROPS</div>
+        </div>
+        <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'3px', marginTop:8 }}>SISTEMA OPERATIVO</div>
       </div>
       <div style={{ padding:'16px 14px', borderBottom:`1px solid ${C.border}`, background:`linear-gradient(135deg, ${C.card}44 0%, ${C.cardAlt}44 100%)` }}>
         <div style={{ display:'flex', gap:12, alignItems:'flex-start' }}>
@@ -644,11 +242,11 @@ function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
             )}
           </div>
           <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontFamily:F, fontSize:'8px', color:C.textSec, letterSpacing:'2px', marginBottom:3 }}>LOCAL</div>
-            <div style={{ fontFamily:F, fontSize:'12px', color:C.text, lineHeight:'1.3', fontWeight:700, wordBreak:'break-word' }}>{localName}</div>
+            <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:3 }}>LOCAL</div>
+            <div style={{ fontFamily:F, fontSize:'14px', color:C.text, lineHeight:'1.3', fontWeight:700, wordBreak:'break-word' }}>{localName}</div>
             <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:6 }}>
               <div style={{ width:5, height:5, borderRadius:'50%', background:C.teal, boxShadow:`0 0 6px ${C.teal}` }}/>
-              <span style={{ fontFamily:F, fontSize:'8px', color:C.teal, letterSpacing:'1px' }}>ACTIVO</span>
+              <span style={{ fontFamily:F, fontSize:'12px', color:C.teal, letterSpacing:'1px' }}>ACTIVO</span>
             </div>
           </div>
         </div>
@@ -664,7 +262,7 @@ function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
               transition:'all 0.12s',
             }}>
               <Icon size={14} color={on?C.orange:C.textSec}/>
-              <span style={{ fontFamily:F, fontSize:'11px', letterSpacing:'2.5px', color:on?C.orange:C.textSec, fontWeight:on?700:400 }}>
+              <span style={{ fontFamily:F, fontSize:'14px', letterSpacing:'2.5px', color:on?C.orange:C.textSec, fontWeight:on?700:400 }}>
                 {label}
               </span>
             </div>
@@ -672,13 +270,15 @@ function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
         })}
       </nav>
       <div style={{ padding:'16px 22px', borderTop:`1px solid ${C.border2}` }}>
-        <button onClick={() => onOpenLocalSettings?.()} style={{ width:'100%', padding:'10px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, marginBottom:12, cursor:'pointer', transition:'all 0.2s', display:'flex', alignItems:'center', gap:10 }}>
-          <Store size={14} color={C.orange}/>
-          <div style={{ textAlign:'left', flex:1 }}>
-            <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px' }}>GESTIÓN</div>
-            <div style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'1.5px', fontWeight:700 }}>LOCAL</div>
-          </div>
-        </button>
+        {userRole === 'manager' && (
+          <button onClick={() => onOpenLocalSettings?.()} style={{ width:'100%', padding:'10px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, marginBottom:12, cursor:'pointer', transition:'all 0.2s', display:'flex', alignItems:'center', gap:10 }}>
+            <Store size={14} color={C.orange}/>
+            <div style={{ textAlign:'left', flex:1 }}>
+              <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1.5px' }}>GESTIÓN</div>
+              <div style={{ fontFamily:F, fontSize:'14px', color:C.orange, letterSpacing:'1.5px', fontWeight:700 }}>LOCAL</div>
+            </div>
+          </button>
+        )}
         {(() => {
           const sub = localStorage.getItem('barops_subscription') ? JSON.parse(localStorage.getItem('barops_subscription')) : null;
           const bg = sub?.status==='active'?C.purpleBg:C.tealBg;
@@ -686,15 +286,19 @@ function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
           const label = sub?.status==='active'?'ACTIVO':'TRIAL';
           return (
             <div style={{ padding:'10px 14px', background:bg, border:`1px solid ${color}44`, borderRadius:4, marginBottom:12, cursor:'pointer' }} onClick={() => setActive('pricing')}>
-              <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px' }}>PLAN ACTUAL</div>
+              <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1.5px' }}>PLAN ACTUAL</div>
               <div style={{ fontFamily:F, fontSize:'16px', color, letterSpacing:'4px', fontWeight:700, marginTop:3 }}>PRO</div>
-              <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, marginTop:2 }}>{label}{sub?' · 14 días':''}</div>
+              <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, marginTop:2 }}>{label}{sub?' · 14 días':''}</div>
             </div>
           );
         })()}
         <div style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', padding:'4px 0' }}>
           <HelpCircle size={12} color={C.textSec}/>
-          <span style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px' }}>AYUDA & SOPORTE</span>
+          <span style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'1.5px' }}>AYUDA & SOPORTE</span>
+        </div>
+        <div onClick={onLogout} style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', padding:'8px 0', marginTop: 12, borderTop: `1px solid ${C.border2}` }}>
+          <LogOut size={12} color={C.red}/>
+          <span style={{ fontFamily:F, fontSize:'13px', color:C.red, letterSpacing:'1.5px', fontWeight:700 }}>CERRAR SESIÓN</span>
         </div>
       </div>
     </>
@@ -708,6 +312,12 @@ function Sidebar({ active, setActive, localName, onOpenLocalSettings }) {
             {sidebarOpen ? <X size={20}/> : <ChevronDown size={20} style={{transform:'rotate(-90deg)'}}/>}
           </button>
           <div style={{ fontFamily:F, fontSize:'16px', fontWeight:700, color:C.orange, letterSpacing:'4px' }}>BAROPS</div>
+        {(cartItems && cartItems.length > 0) && (
+          <div onClick={() => setShowCartDrawer(true)} style={{ cursor:'pointer', background:C.orange, borderRadius:20, padding:'4px 10px', display:'flex', alignItems:'center', gap:6, color:'#000' }}>
+            <ShoppingCart size={14} />
+            <span style={{ fontSize:12, fontWeight:700 }}>{cartItems.length}</span>
+          </div>
+        )}
           <div style={{ width:20 }}/>
         </div>
         {sidebarOpen && (
@@ -816,7 +426,18 @@ function Dashboard({ onNavigate }) {
   const [isMobile, setIsMobile] = useState(false);
 
   const LOCAL_ID = '00000000-0000-0000-0000-000000000001';
-  const { localName } = useApp();
+  const { localName, userRole, setCartItems } = useApp() || {};
+
+  const handlePedir = (p) => {
+    if (setCartItems) {
+      setCartItems(prev => {
+        const ex = prev.find(i => i.id === p.id);
+        if (ex) return prev.map(i => i.id === p.id ? { ...i, qty: i.qty + 1 } : i);
+        return [...prev, { ...p, qty: 1 }];
+      });
+      setToast('Añadido al carrito');
+    }
+  };
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -875,6 +496,21 @@ function Dashboard({ onNavigate }) {
   useEffect(() => {
     fetchData();
   }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Mock data para gráficos de Dashboard (Recharts)
+  const chartData = [
+    { name: 'Lun', ingresos: 1200, costes: 350 },
+    { name: 'Mar', ingresos: 1100, costes: 320 },
+    { name: 'Mié', ingresos: 1450, costes: 410 },
+    { name: 'Jue', ingresos: 1800, costes: 480 },
+    { name: 'Vie', ingresos: 2900, costes: 850 },
+    { name: 'Sáb', ingresos: 3200, costes: 980 },
+    { name: 'Dom', ingresos: 2400, costes: 620 },
+  ];
 
   // Derived Metrics
   const criticals = data.products.filter(p => parseFloat(p.stock_actual || 0) <= parseFloat(p.stock_minimo || 0));
@@ -995,16 +631,36 @@ function Dashboard({ onNavigate }) {
           )}
         </div>
         {!isMobile && <div style={{ textAlign:'right' }}>
-          <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'2px', textTransform:'uppercase' }}>
+          <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, letterSpacing:'2px', textTransform:'uppercase' }}>
             {new Date().toLocaleDateString('es-ES', { weekday:'long', day:'numeric', month:'long', year:'numeric' })}
           </div>
         </div>}
       </div>
 
+      {/* SECCIÓN 1.5 — ACCESOS RÁPIDOS */}
+      <div style={{ display:'grid', gridTemplateColumns:isMobile?'repeat(2, 1fr)':'repeat(4, 1fr)', gap:12, marginBottom:32 }}>
+        <Btn variant="ghost" onClick={() => onNavigate('inventario')} sx={{ padding:'16px', display:'flex', flexDirection:'column', alignItems:'center', gap:8, background:C.card, border:`1px solid ${C.border2}`, height:'auto' }}>
+          <Package size={20} color={C.teal} />
+          <span style={{ fontSize:'13px', letterSpacing:'1px', fontWeight:700 }}>NUEVO PEDIDO</span>
+        </Btn>
+        <Btn variant="ghost" onClick={() => onNavigate('inventario')} sx={{ padding:'16px', display:'flex', flexDirection:'column', alignItems:'center', gap:8, background:C.card, border:`1px solid ${C.border2}`, height:'auto' }}>
+          <AlertTriangle size={20} color={C.red} />
+          <span style={{ fontSize:'13px', letterSpacing:'1px', fontWeight:700 }}>REGISTRAR MERMA</span>
+        </Btn>
+        <Btn variant="ghost" onClick={() => onNavigate('carta')} sx={{ padding:'16px', display:'flex', flexDirection:'column', alignItems:'center', gap:8, background:C.card, border:`1px solid ${C.border2}`, height:'auto' }}>
+          <Wine size={20} color={C.purple} />
+          <span style={{ fontSize:'13px', letterSpacing:'1px', fontWeight:700 }}>ESCANDALLOS</span>
+        </Btn>
+        <Btn variant="ghost" onClick={() => handleAgentSubmit('¿Cómo mejoro mi margen hoy?')} sx={{ padding:'16px', display:'flex', flexDirection:'column', alignItems:'center', gap:8, background:`${C.orange}10`, border:`1px solid ${C.orange}44`, height:'auto' }}>
+          <Bot size={20} color={C.orange} />
+          <span style={{ fontSize:'13px', letterSpacing:'1px', color:C.orange, fontWeight:700 }}>CONSULTAR IA</span>
+        </Btn>
+      </div>
+
       {/* SECCIÓN 2 — ALERTAS DEL DÍA */}
       <div style={{ marginBottom:32, width:'100%' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
-          <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, margin:0, fontWeight:700 }}>ACCIONES DE HOY ({alerts.length})</h2>
+          <h2 style={{ fontSize:'14px', letterSpacing:'3px', color:C.textSec, margin:0, fontWeight:700 }}>ACCIONES DE HOY ({alerts.length})</h2>
         </div>
         <Card sx={{ overflow:'hidden', maxHeight:'200px', overflowY:'auto', overflowX:'auto', width:'100%', boxSizing:'border-box' }}>
           <div style={{ display:'flex', flexDirection:'column', gap:0, width:'100%' }}>
@@ -1019,14 +675,14 @@ function Dashboard({ onNavigate }) {
                   transition:'background 0.2s'
                 }} onMouseEnter={e=>e.currentTarget.style.background='#1A1A1A'} onMouseLeave={e=>e.currentTarget.style.background=a.type==='critical' ? '#FF000006' : a.type==='preventive' ? '#F59E0B06' : a.type==='carta' ? '#7C3AED06' : '#00D4AA06'}>
                   <style>{`@keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }`}</style>
-                  <span style={{ fontSize:'11px', color:'#666666', fontWeight:400, flex:1 }}>{a.text}</span>
-                  {a.action && <Btn variant="ghost" onClick={a.handler} sx={{ padding:'4px 10px', fontSize:'8px', flexShrink:0, marginLeft:8 }}>{a.action}</Btn>}
+                  <span style={{ fontSize:'14px', color:'#666666', fontWeight:400, flex:1 }}>{a.text}</span>
+                  {a.action && <Btn variant="ghost" onClick={a.handler} sx={{ padding:'8px 16px', fontSize:'12px', flexShrink:0, marginLeft:8 }}>{a.action}</Btn>}
                 </div>
               ))
             )}
             {!expandedAlerts && alerts.length > 8 && (
               <div style={{ padding:'10px 16px', borderTop:`1px solid ${C.border}`, textAlign:'center' }}>
-                <Btn variant="ghost" onClick={()=>setExpandedAlerts(true)} sx={{ fontSize:'8px' }}>VER TODAS ({alerts.length})</Btn>
+                <Btn variant="ghost" onClick={()=>setExpandedAlerts(true)} sx={{ fontSize:'12px' }}>VER TODAS ({alerts.length})</Btn>
               </div>
             )}
           </div>
@@ -1034,13 +690,13 @@ function Dashboard({ onNavigate }) {
       </div>
 
       {/* SECCIÓN 3 — 4 KPIs */}
-      <div style={{ display:'grid', gridTemplateColumns:isMobile?'repeat(2, 1fr)':'repeat(4, 1fr)', gap:isMobile?12:20, marginBottom:32, width:'100%' }}>
+      <div style={{ display:'grid', gridTemplateColumns:isMobile?'repeat(2, 1fr)':(userRole === 'manager' ? 'repeat(4, 1fr)' : 'repeat(2, 1fr)'), gap:isMobile?12:20, marginBottom:32, width:'100%' }}>
         {loading ? [1,2,3,4].map(i => <Skeleton key={i} height={120} />) : (
           <>
             <Card sx={{ padding:20, position:'relative', overflow:'hidden' }}>
               <SLabel label="SALUD INVENTARIO" color={C.orange} icon={Package}/>
               <div style={{ fontSize:'28px', color:C.text }}><CounterUp value={data.products.length} /></div>
-              <div style={{ fontSize:'11px', color:C.textSec, marginTop:4 }}>
+              <div style={{ fontSize:'14px', color:C.textSec, marginTop:4 }}>
                 {stablest} estables · <span style={{ color:criticals.length>0?C.red:C.textSec }}>{criticals.length} críticos</span>
               </div>
               <div style={{ position:'absolute', bottom:0, left:0, right:0, height:3, display:'flex' }}>
@@ -1049,42 +705,72 @@ function Dashboard({ onNavigate }) {
               </div>
             </Card>
 
-            <Card sx={{ padding:20 }}>
-              <SLabel label="VALOR EN STOCK" color={C.teal} icon={TrendingUp}/>
-              <div style={{ fontSize:'28px', color:valorStock>0?C.text:C.textSec }}>
-                {valorStock > 0 ? <CounterUp value={valorStock} prefix="€" decimals={0} /> : "Sin valorar"}
-              </div>
-              <div style={{ fontSize:'11px', color:C.textSec, marginTop:4 }}>
-                {valorStock > 0 ? `${data.products.length} productos valorados` : "Añade costes en Inventario"}
-              </div>
-            </Card>
+            {userRole === 'manager' && (
+              <Card sx={{ padding:20 }}>
+                <SLabel label="VALOR EN STOCK" color={C.teal} icon={TrendingUp}/>
+                <div style={{ fontSize:'28px', color:valorStock>0?C.text:C.textSec }}>
+                  {valorStock > 0 ? <CounterUp value={valorStock} prefix="€" decimals={0} /> : "Sin valorar"}
+                </div>
+                <div style={{ fontSize:'14px', color:C.textSec, marginTop:4 }}>
+                  {valorStock > 0 ? `${data.products.length} productos valorados` : "Añade costes en Inventario"}
+                </div>
+              </Card>
+            )}
 
             <Card sx={{ padding:20 }}>
               <SLabel label="CARTA ACTIVA" color={C.purple} icon={BookOpen}/>
               <div style={{ fontSize:'28px', color:C.text }}><CounterUp value={activeCocktails} /></div>
-              <div style={{ fontSize:'11px', color:C.textSec, marginTop:4 }}>
+              <div style={{ fontSize:'14px', color:C.textSec, marginTop:4 }}>
                 <span style={{ color:draftCocktails>0?C.amber:C.textSec }}>{draftCocktails} borradores</span> · {revisionCocktails} revisión
               </div>
             </Card>
 
-            <Card sx={{ padding:20 }}>
-              <SLabel label="MERMA ESTIMADA" color={C.red} icon={AlertTriangle}/>
-              <div style={{ fontSize:'28px', color:mermaRiesgo>0?C.red:C.teal }}>
-                {mermaRiesgo > 0 ? <CounterUp value={mermaRiesgo} prefix="€" /> : "€0"}
-              </div>
-              <div style={{ fontSize:'11px', color:C.textSec, marginTop:4 }}>
-                {mermaRiesgo > 0 ? "Valor en riesgo de perderse" : "Sin merma detectada"}
-              </div>
-            </Card>
+            {userRole === 'manager' && (
+              <Card sx={{ padding:20 }}>
+                <SLabel label="MERMA ESTIMADA" color={C.red} icon={AlertTriangle}/>
+                <div style={{ fontSize:'28px', color:mermaRiesgo>0?C.red:C.teal }}>
+                  {mermaRiesgo > 0 ? <CounterUp value={mermaRiesgo} prefix="€" /> : "€0"}
+                </div>
+                <div style={{ fontSize:'14px', color:C.textSec, marginTop:4 }}>
+                  {mermaRiesgo > 0 ? "Valor en riesgo de perderse" : "Sin merma detectada"}
+                </div>
+              </Card>
+            )}
           </>
         )}
       </div>
 
+      {/* SECCIÓN 3.5 — RENDIMIENTO FINANCIERO */}
+      {userRole === 'manager' && (
+        <div style={{ marginBottom:32, width:'100%' }}>
+          <h2 style={{ fontSize:'14px', letterSpacing:'3px', color:C.textSec, margin:'0 0 16px 0', fontWeight:700 }}>RENDIMIENTO FINANCIERO (7 DÍAS)</h2>
+          <Card sx={{ padding:isMobile?'16px 8px':'24px', height:300 }}>
+            {loading ? <Skeleton height="100%" /> : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border2} vertical={false} />
+                  <XAxis dataKey="name" stroke={C.textSec} fontSize={10} tickLine={false} axisLine={false} dy={10} />
+                  <YAxis stroke={C.textSec} fontSize={10} tickLine={false} axisLine={false} tickFormatter={(val) => `€${val}`} />
+                  <Tooltip 
+                    contentStyle={{ background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:8, fontFamily:F, fontSize:11 }}
+                    itemStyle={{ fontWeight:700, color: C.text }}
+                    formatter={(value) => [`€${value}`, undefined]}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 10, fontFamily: F, paddingTop: 10 }} />
+                  <Line type="monotone" name="Ingresos brutos" dataKey="ingresos" stroke={C.teal} strokeWidth={3} dot={{ r: 4, fill: C.teal, strokeWidth: 0 }} activeDot={{ r: 6 }} />
+                  <Line type="monotone" name="Costes operacionales" dataKey="costes" stroke={C.orange} strokeWidth={3} dot={{ r: 4, fill: C.orange, strokeWidth: 0 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+        </div>
+      )}
+
       {/* SECCIÓN 4 — INVENTARIO URGENTE */}
       <div style={{ marginBottom:32, width:'100%' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
-          <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, margin:0, fontWeight:700 }}>REQUIEREN ATENCIÓN</h2>
-          {!isMobile && <Btn variant="ghost" onClick={()=>onNavigate('inventario')} sx={{ fontSize:'9px' }}>VER TODO EL INVENTARIO →</Btn>}
+          <h2 style={{ fontSize:'14px', letterSpacing:'3px', color:C.textSec, margin:0, fontWeight:700 }}>REQUIEREN ATENCIÓN</h2>
+          {!isMobile && <Btn variant="ghost" onClick={()=>onNavigate('inventario')} sx={{ fontSize:'12px' }}>VER TODO EL INVENTARIO →</Btn>}
         </div>
         {!isMobile ? (
         <Card sx={{ overflow:'hidden', maxHeight:'200px', overflowY:'auto', overflowX:'auto', width:'100%', boxSizing:'border-box' }}>
@@ -1092,10 +778,10 @@ function Dashboard({ onNavigate }) {
           <table style={{ width:'100%', borderCollapse:'collapse', minWidth:'600px' }}>
             <thead>
               <tr style={{ background:'#0D0D0D', borderBottom:`1px solid ${C.border}` }}>
-                <th style={{ textAlign:'left', padding:'10px 16px', fontSize:'8px', color:'#555555', letterSpacing:'1px' }}>PRODUCTO</th>
-                <th style={{ textAlign:'left', padding:'10px 16px', fontSize:'8px', color:'#555555', letterSpacing:'1px' }}>STOCK</th>
-                <th style={{ textAlign:'left', padding:'10px 16px', fontSize:'8px', color:'#555555', letterSpacing:'1px' }}>ESTADO</th>
-                <th style={{ textAlign:'right', padding:'10px 16px', fontSize:'8px', color:'#555555', letterSpacing:'1px' }}>ACCIÓN</th>
+                <th style={{ textAlign:'left', padding:'10px 16px', fontSize:'12px', color:'#555555', letterSpacing:'1px' }}>PRODUCTO</th>
+                <th style={{ textAlign:'left', padding:'10px 16px', fontSize:'12px', color:'#555555', letterSpacing:'1px' }}>STOCK</th>
+                <th style={{ textAlign:'left', padding:'10px 16px', fontSize:'12px', color:'#555555', letterSpacing:'1px' }}>ESTADO</th>
+                <th style={{ textAlign:'right', padding:'10px 16px', fontSize:'12px', color:'#555555', letterSpacing:'1px' }}>ACCIÓN</th>
               </tr>
             </thead>
             <tbody>
@@ -1127,11 +813,11 @@ function Dashboard({ onNavigate }) {
                         onMouseEnter={e=>e.currentTarget.style.background='#1A1A1A'}
                         onMouseLeave={e=>e.currentTarget.style.background=bg}>
                         <td style={{ padding:'10px 16px' }}>
-                          <div style={{ color:isZero?C.red:'#666666', fontSize:'11px', fontWeight:400 }}>{p.nombre}</div>
-                          <div style={{ color:'#555555', fontSize:'9px', marginTop:2 }}>{p.categoria}</div>
+                          <div style={{ color:isZero?C.red:'#666666', fontSize:'14px', fontWeight:400 }}>{p.nombre}</div>
+                          <div style={{ color:'#555555', fontSize:'12px', marginTop:2 }}>{p.categoria}</div>
                         </td>
                         <td style={{ padding:'10px 16px' }}>
-                          <div style={{ fontSize:'11px', color:'#666666' }}>{s} {p.unit || p.unidad}</div>
+                          <div style={{ fontSize:'14px', color:'#666666' }}>{s} {p.unit || p.unidad}</div>
                           <div style={{ width:60, height:3, background:'#222', marginTop:4, borderRadius:2 }}>
                             <div style={{ width:`${Math.min(100, (s/(m||1))*50)}%`, height:'100%', background:isCrit?C.red:C.amber }} />
                           </div>
@@ -1144,14 +830,7 @@ function Dashboard({ onNavigate }) {
                           />
                         </td>
                         <td style={{ padding:'10px 16px', textAlign:'right' }}>
-                          <Btn variant="ghost" onClick={() => {
-                            if (p.telefono_proveedor) {
-                              const msg = encodeURIComponent(`Hola, necesito reponer ${p.nombre}...`);
-                              window.open(`https://wa.me/${p.telefono_proveedor.replace(/\s+/g,'')}?text=${msg}`, '_blank');
-                            } else {
-                              onNavigate('inventario');
-                            }
-                          }} sx={{ fontSize:'8px', padding:'4px 10px' }}>
+                          <Btn variant="ghost" onClick={() => p.proveedor ? handlePedir(p) : onNavigate('inventario')} sx={{ fontSize:'12px', padding:'8px 16px' }}>
                             {p.proveedor ? 'PEDIR' : 'GESTIONAR'}
                           </Btn>
                         </td>
@@ -1187,19 +866,12 @@ function Dashboard({ onNavigate }) {
                 return (
                   <Card key={p.id} sx={{ padding:16, display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, background:isZero ? '#FF000606' : isCrit ? '#FF6B3506' : '#F59E0B04', width:'100%', boxSizing:'border-box' }}>
                     <div style={{ flex:1 }}>
-                      <div style={{ fontSize:'12px', color:isZero?C.red:'#999', fontWeight:600 }}>{p.nombre}</div>
-                      <div style={{ fontSize:'10px', color:C.textSec, marginTop:4 }}>{p.categoria}</div>
-                      <div style={{ fontSize:'10px', color:C.textSec, marginTop:2 }}>{s} {p.unit || p.unidad} · Stock min: {m}</div>
+                      <div style={{ fontSize:'14px', color:isZero?C.red:'#999', fontWeight:600 }}>{p.nombre}</div>
+                      <div style={{ fontSize:'13px', color:C.textSec, marginTop:4 }}>{p.categoria}</div>
+                      <div style={{ fontSize:'13px', color:C.textSec, marginTop:2 }}>{s} {p.unit || p.unidad} · Stock min: {m}</div>
                       <Badge label={isZero?'SIN STOCK':isCrit?'CRÍTICO':'PREVENTIVO'} color={isCrit?C.red:C.amber} bg={isCrit?C.redBg:C.amberBg} style={{ marginTop:8 }} />
                     </div>
-                    <Btn variant="ghost" onClick={() => {
-                      if (p.telefono_proveedor) {
-                        const msg = encodeURIComponent(`Hola, necesito reponer ${p.nombre}...`);
-                        window.open(`https://wa.me/${p.telefono_proveedor.replace(/\s+/g,'')}?text=${msg}`, '_blank');
-                      } else {
-                        onNavigate('inventario');
-                      }
-                    }} sx={{ fontSize:'9px', padding:'6px 12px', whiteSpace:'nowrap' }}>
+                    <Btn variant="ghost" onClick={() => p.proveedor ? handlePedir(p) : onNavigate('inventario')} sx={{ fontSize:'12px', padding:'10px 18px', whiteSpace:'nowrap' }}>
                       {p.proveedor ? 'PEDIR' : 'GESTIONAR'}
                     </Btn>
                   </Card>
@@ -1215,11 +887,11 @@ function Dashboard({ onNavigate }) {
       <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:isMobile?16:24, marginBottom:32, width:'100%' }}>
         {/* COLUMNA IZQUIERDA — ESTADO DE LA CARTA */}
         <div style={{ width:'100%' }}>
-          <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, marginBottom:16, fontWeight:700 }}>CARTA</h2>
+          <h2 style={{ fontSize:'14px', letterSpacing:'3px', color:C.textSec, marginBottom:16, fontWeight:700 }}>CARTA</h2>
           <Card sx={{ padding:24, height:'100%', width:'100%', boxSizing:'border-box' }}>
             {loading ? <Skeleton height={150}/> : data.cocktails.length === 0 ? (
               <div style={{ textAlign:'center', padding:20 }}>
-                <div style={{ color:C.textSec, fontSize:'12px', marginBottom:16 }}>Sin cócteles en carta</div>
+                <div style={{ color:C.textSec, fontSize:'14px', marginBottom:16 }}>Sin cócteles en carta</div>
                 <Btn variant="outline" onClick={()=>onNavigate('carta')}>CREAR PRIMER CÓCTEL →</Btn>
               </div>
             ) : (
@@ -1238,7 +910,7 @@ function Dashboard({ onNavigate }) {
                   </div>
                   <div style={{ display:'flex', alignItems:'center', gap:12 }}>
                     <span style={{ fontSize:'14px', fontWeight:700, color:C.text }}>{revisionCocktails}</span>
-                    {revisionCocktails > 0 && <span onClick={()=>onNavigate('carta')} style={{ color:C.orange, fontSize:'11px', cursor:'pointer', fontWeight:700 }}>Revisar →</span>}
+                    {revisionCocktails > 0 && <span onClick={()=>onNavigate('carta')} style={{ color:C.orange, fontSize:'14px', cursor:'pointer', fontWeight:700 }}>Revisar →</span>}
                   </div>
                 </div>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
@@ -1248,14 +920,14 @@ function Dashboard({ onNavigate }) {
                   </div>
                   <div style={{ display:'flex', alignItems:'center', gap:12 }}>
                     <span style={{ fontSize:'14px', fontWeight:700, color:C.text }}>{draftCocktails}</span>
-                    {draftCocktails > 0 && <span onClick={()=>onNavigate('carta')} style={{ color:C.orange, fontSize:'11px', cursor:'pointer', fontWeight:700 }}>Ver borradores →</span>}
+                    {draftCocktails > 0 && <span onClick={()=>onNavigate('carta')} style={{ color:C.orange, fontSize:'14px', cursor:'pointer', fontWeight:700 }}>Ver borradores →</span>}
                   </div>
                 </div>
 
                 {criticals.length > 0 && (
                   <div style={{ marginTop:8, padding:'12px', background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:4, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                    <span style={{ color:C.amber, fontSize:'11px', fontWeight:600 }}>⚠ {criticals.length} cócteles afectados por stock</span>
-                    <Btn variant="ghost" onClick={()=>onNavigate('carta')} sx={{ fontSize:'9px', padding:'4px 8px', color:C.amber, borderColor:`${C.amber}44` }}>VER CARTA →</Btn>
+                    <span style={{ color:C.amber, fontSize:'14px', fontWeight:600 }}>⚠ {criticals.length} cócteles afectados por stock</span>
+                    <Btn variant="ghost" onClick={()=>onNavigate('carta')} sx={{ fontSize:'12px', padding:'4px 8px', color:C.amber, borderColor:`${C.amber}44` }}>VER CARTA →</Btn>
                   </div>
                 )}
               </div>
@@ -1265,10 +937,10 @@ function Dashboard({ onNavigate }) {
 
         {/* COLUMNA DERECHA — ACTIVIDAD RECIENTE */}
         <div>
-          <h2 style={{ fontSize:'11px', letterSpacing:'3px', color:C.textSec, marginBottom:16, fontWeight:700 }}>ACTIVIDAD RECIENTE</h2>
+          <h2 style={{ fontSize:'14px', letterSpacing:'3px', color:C.textSec, marginBottom:16, fontWeight:700 }}>ACTIVIDAD RECIENTE</h2>
           <Card sx={{ padding:0, height:'100%', overflow:'hidden' }}>
             {loading ? <div style={{ padding:20 }}><Skeleton height={150}/></div> : data.movements.length === 0 ? (
-              <div style={{ padding:40, textAlign:'center', color:C.textSec, fontSize:'12px' }}>Sin actividad registrada todavía</div>
+              <div style={{ padding:40, textAlign:'center', color:C.textSec, fontSize:'14px' }}>Sin actividad registrada todavía</div>
             ) : (
               <div style={{ display:'flex', flexDirection:'column' }}>
                 {data.movements.map((m, i) => (
@@ -1282,13 +954,13 @@ function Dashboard({ onNavigate }) {
                         background: m.tipo==='entrada'?C.teal : m.tipo==='salida'?C.orange : m.tipo==='merma'?C.red : C.amber 
                       }} />
                       <div>
-                        <div style={{ fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'0.5px' }}>
+                        <div style={{ fontSize:'14px', color:C.text, fontWeight:700, letterSpacing:'0.5px' }}>
                           {m.tipo?.toUpperCase()} — {m.productos?.nombre || 'Producto'}
                         </div>
-                        {m.motivo && <div style={{ fontSize:'10px', color:C.textSec, marginTop:2 }}>{m.motivo}</div>}
+                        {m.motivo && <div style={{ fontSize:'13px', color:C.textSec, marginTop:2 }}>{m.motivo}</div>}
                       </div>
                     </div>
-                    <div style={{ fontSize:'10px', color:C.textSec }}>{getRelTime(m.created_at)}</div>
+                    <div style={{ fontSize:'13px', color:C.textSec }}>{getRelTime(m.created_at)}</div>
                   </div>
                 ))}
               </div>
@@ -1301,7 +973,7 @@ function Dashboard({ onNavigate }) {
       <div style={{ marginBottom:40, width:'100%' }}>
         <Card sx={{ padding:isMobile?16:24, borderLeft:`2px solid ${C.orange}`, width:'100%', boxSizing:'border-box' }}>
           <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
-            <span style={{ fontSize:'11px', fontWeight:700, letterSpacing:'2px', color:C.textSec }}>AGENTE BAROPS</span>
+            <span style={{ fontSize:'14px', fontWeight:700, letterSpacing:'2px', color:C.textSec }}>AGENTE BAROPS</span>
             <Badge label="IA" color={C.orange} bg={C.orangeBg} />
           </div>
           <div style={{ display:'flex', flexDirection:isMobile?'column':'row', gap:isMobile?8:12, marginBottom:16, width:'100%' }}>
@@ -1328,7 +1000,7 @@ function Dashboard({ onNavigate }) {
             {isMobile ? CHIPS.slice(0, 2).map(c => (
               <button key={c} onClick={()=>handleAgentSubmit(c)} style={{
                 background:'transparent', border:`1px solid ${C.border2}`, borderRadius:20,
-                padding:'6px 10px', fontSize:'9px', color:C.textSec, cursor:'pointer',
+                padding:'6px 10px', fontSize:'12px', color:C.textSec, cursor:'pointer',
                 transition:'all 0.2s', fontFamily:F, whiteSpace:'nowrap', textOverflow:'ellipsis', overflow:'hidden', minWidth:0, flex:0.9
               }} onMouseEnter={e=>{e.target.style.borderColor=C.orange; e.target.style.color=C.orange;}}
                  onMouseLeave={e=>{e.target.style.borderColor=C.border2; e.target.style.color=C.textSec;}}>
@@ -1337,7 +1009,7 @@ function Dashboard({ onNavigate }) {
             )) : CHIPS.map(c => (
               <button key={c} onClick={()=>handleAgentSubmit(c)} style={{
                 background:'transparent', border:`1px solid ${C.border2}`, borderRadius:20,
-                padding:'6px 16px', fontSize:'11px', color:C.textSec, cursor:'pointer',
+                padding:'6px 16px', fontSize:'14px', color:C.textSec, cursor:'pointer',
                 transition:'all 0.2s', fontFamily:F
               }} onMouseEnter={e=>{e.target.style.borderColor=C.orange; e.target.style.color=C.orange;}}
                  onMouseLeave={e=>{e.target.style.borderColor=C.border2; e.target.style.color=C.textSec;}}>
@@ -1408,7 +1080,7 @@ function ImportCocktailsModal({ onClose, onSave }) {
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
       <Card accent={C.orange} sx={{ padding:28, maxWidth:700, width:'90%', maxHeight:'90vh', overflowY:'auto' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
-          <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>IMPORTAR CÓCTELES</span>
+          <span style={{ fontFamily:F, fontSize:'14px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>IMPORTAR CÓCTELES</span>
           <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
             <X size={18}/>
           </button>
@@ -1416,24 +1088,24 @@ function ImportCocktailsModal({ onClose, onSave }) {
 
         {step === 1 && (
           <div>
-            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:12 }}>PASO 1: CARGAR CSV</div>
+            <div style={{ fontSize:'13px', color:C.textSec, letterSpacing:'1.5px', marginBottom:12 }}>PASO 1: CARGAR CSV</div>
             <textarea
               value={raw}
               onChange={e => setRaw(e.target.value)}
               placeholder="Pega tu CSV aquí (nombre,tipo,precio,descripcion)..."
-              style={{ width:'100%', height:150, padding:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box', marginBottom:12, resize:'vertical' }}
+              style={{ width:'100%', height:150, padding:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box', marginBottom:12, resize:'vertical' }}
             />
             <input ref={fileRef} type="file" accept=".csv" onChange={handleFile} style={{ display:'none' }}/>
             <div style={{ display:'flex', gap:10, marginBottom:12 }}>
-              <Btn onClick={() => fileRef.current?.click()} sx={{ flex:1, padding:'10px', fontSize:'11px' }}>
+              <Btn onClick={() => fileRef.current?.click()} sx={{ flex:1, padding:'10px', fontSize:'14px' }}>
                 📎 CARGAR ARCHIVO
               </Btn>
-              <Btn onClick={downloadTemplate} variant="outline" sx={{ flex:1, padding:'10px', fontSize:'11px' }}>
+              <Btn onClick={downloadTemplate} variant="outline" sx={{ flex:1, padding:'10px', fontSize:'14px' }}>
                 📥 DESCARGAR TEMPLATE
               </Btn>
             </div>
-            {parseErr && <div style={{ padding:'10px', background:'#EF444422', border:`1px solid #EF444433`, borderRadius:3, fontSize:'11px', color:'#EF4444', marginBottom:12 }}>{parseErr}</div>}
-            <Btn onClick={handlePaste} sx={{ width:'100%', padding:'11px', fontSize:'11px' }}>
+            {parseErr && <div style={{ padding:'10px', background:'#EF444422', border:`1px solid #EF444433`, borderRadius:3, fontSize:'14px', color:'#EF4444', marginBottom:12 }}>{parseErr}</div>}
+            <Btn onClick={handlePaste} sx={{ width:'100%', padding:'11px', fontSize:'14px' }}>
               → VERIFICAR CSV
             </Btn>
           </div>
@@ -1441,10 +1113,10 @@ function ImportCocktailsModal({ onClose, onSave }) {
 
         {step === 2 && (
           <div>
-            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:12 }}>PASO 2: REVISAR ({parsed.length} cócteles — importarán como BORRADORES)</div>
+            <div style={{ fontSize:'13px', color:C.textSec, letterSpacing:'1.5px', marginBottom:12 }}>PASO 2: REVISAR ({parsed.length} cócteles — importarán como BORRADORES)</div>
 
             {parseErrors.length > 0 && (
-              <div style={{ padding:'10px', background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:3, fontSize:'10px', color:C.amber, marginBottom:12 }}>
+              <div style={{ padding:'10px', background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:3, fontSize:'13px', color:C.amber, marginBottom:12 }}>
                 ⚠ {parseErrors.length} filas con errores (serán ignoradas)
               </div>
             )}
@@ -1452,9 +1124,9 @@ function ImportCocktailsModal({ onClose, onSave }) {
               {parsed.map((c, i) => (
                 <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, marginBottom:8, gap:12 }}>
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{c.name}</div>
-                    {c.description && <div style={{ fontSize:'10px', color:C.textSec, marginTop:2 }}>{c.description.substring(0,50)}</div>}
-                    <div style={{ fontSize:'11px', color:C.orange, fontWeight:700, marginTop:3 }}>€{c.price.toFixed(2)}</div>
+                    <div style={{ fontSize:'14px', color:C.text, fontWeight:700 }}>{c.name}</div>
+                    {c.description && <div style={{ fontSize:'13px', color:C.textSec, marginTop:2 }}>{c.description.substring(0,50)}</div>}
+                    <div style={{ fontSize:'14px', color:C.orange, fontWeight:700, marginTop:3 }}>€{c.price.toFixed(2)}</div>
                   </div>
                   <div style={{ display:'flex', gap:8, alignItems:'center' }}>
                     <select
@@ -1462,7 +1134,7 @@ function ImportCocktailsModal({ onClose, onSave }) {
                       onChange={(e) => changeTipo(i, e.target.value)}
                       style={{
                         padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3,
-                        fontFamily:F, fontSize:'11px', color:C.textSec, cursor:'pointer', minWidth:120,
+                        fontFamily:F, fontSize:'14px', color:C.textSec, cursor:'pointer', minWidth:120,
                       }}
                     >
                       <option value="clasico">CLÁSICO</option>
@@ -1476,8 +1148,8 @@ function ImportCocktailsModal({ onClose, onSave }) {
               ))}
             </div>
             <div style={{ display:'flex', gap:10 }}>
-              <Btn variant="outline" onClick={() => setStep(1)} sx={{ flex:1, padding:'11px', fontSize:'11px' }}>← ATRÁS</Btn>
-              <Btn onClick={() => { onSave(parsed); onClose(); }} sx={{ flex:1, padding:'11px', fontSize:'11px' }}>✓ IMPORTAR {parsed.length}</Btn>
+              <Btn variant="outline" onClick={() => setStep(1)} sx={{ flex:1, padding:'11px', fontSize:'14px' }}>← ATRÁS</Btn>
+              <Btn onClick={() => { onSave(parsed); onClose(); }} sx={{ flex:1, padding:'11px', fontSize:'14px' }}>✓ IMPORTAR {parsed.length}</Btn>
             </div>
           </div>
         )}
@@ -1494,7 +1166,7 @@ function ConsumptionModal({ item, onClose, onSave }) {
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000, fontFamily:F }}>
       <Card accent={C.teal} sx={{ padding:28, maxWidth:400, width:'90%' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
-          <span style={{ fontFamily:F, fontSize:'12px', color:C.teal, letterSpacing:'3px', fontWeight:700 }}>CONFIGURAR CONSUMO</span>
+          <span style={{ fontFamily:F, fontSize:'14px', color:C.teal, letterSpacing:'3px', fontWeight:700 }}>CONFIGURAR CONSUMO</span>
           <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
             <X size={18}/>
           </button>
@@ -1502,18 +1174,18 @@ function ConsumptionModal({ item, onClose, onSave }) {
 
         <div style={{ marginBottom:6 }}>
           <div style={{ fontSize:'13px', color:C.text, fontWeight:700, marginBottom:4 }}>{item.name}</div>
-          <div style={{ fontSize:'11px', color:C.textSec, marginBottom:12 }}>Stock actual: {item.stock}</div>
+          <div style={{ fontSize:'14px', color:C.textSec, marginBottom:12 }}>Stock actual: {item.stock}</div>
         </div>
 
         <div style={{ marginBottom:20 }}>
-          <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>USO SEMANAL ESTIMADO</div>
+          <div style={{ fontSize:'13px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>USO SEMANAL ESTIMADO</div>
           <input
             value={weekly}
             onChange={e=>setWeekly(e.target.value)}
             placeholder="Ej: 3.5 L, 5 bot, 50 ud"
             style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box', marginBottom:12 }}
           />
-          <div style={{ fontSize:'10px', color:C.textSec, lineHeight:'1.5', padding:'8px 10px', background:C.tealBg, borderRadius:3, border:`1px solid ${C.teal}33` }}>
+          <div style={{ fontSize:'13px', color:C.textSec, lineHeight:'1.5', padding:'8px 10px', background:C.tealBg, borderRadius:3, border:`1px solid ${C.teal}33` }}>
             💡 Ejemplos: "3.5 L" para líquidos, "5 bot" para botellas, "50 ud" para unidades
           </div>
         </div>
@@ -1535,6 +1207,7 @@ function ImportModal({ onClose }) {
   const [parsed, setParsed] = useState([]);
   const [parseErrors, setParseErrors] = useState([]);
   const [parseErr, setParseErr] = useState('');
+  const [loadingMsg, setLoadingMsg] = useState('');
   const fileRef = useRef(null);
 
   const handleFile = (e) => {
@@ -1550,6 +1223,34 @@ function ImportModal({ onClose }) {
     if (!result.ok) { setParseErr(result.error); return; }
     if (result.items.length === 0) { setParseErr('No se encontraron filas válidas. Revisa el formato.'); return; }
     setParseErr(''); setParsed(result.items); setParseErrors(result.errors); setStep(2);
+  };
+
+  const imageRef = useRef(null);
+
+  const handleImageSelected = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setStep(0); // loading state
+    setLoadingMsg(`Subiendo y analizando ${file.name} con IA (OCR)...`);
+    setTimeout(() => setLoadingMsg('Extrayendo productos y unidades...'), 1500);
+    setTimeout(() => setLoadingMsg('Conciliando con base de datos...'), 3000);
+    
+    setTimeout(() => {
+      const mockParsed = [
+        { id: 'ocr1', name: 'SANTA TERESA gran reserva', cat: 'Ron', stock: 12, unit: 'bot', cpu: 10.95 },
+        { id: 'ocr2', name: 'DON JULIO 70 th.', cat: 'Tequila', stock: 6, unit: 'bot', cpu: 57.34 },
+        { id: 'ocr3', name: 'TEQUILA SIETE LEGUAS BLANCO', cat: 'Tequila', stock: 3, unit: 'bot', cpu: 47.94 },
+        { id: 'ocr4', name: 'MAESTRO DOBEL DIAMANTE', cat: 'Tequila', stock: 5, unit: 'bot', cpu: 247.00 },
+        { id: 'ocr5', name: 'TEQUILA DON JULIO BLANCO', cat: 'Tequila', stock: 6, unit: 'bot', cpu: 36.99 },
+        { id: 'ocr6', name: 'GREY GOOSE ORIGINAL', cat: 'Vodka', stock: 6, unit: 'bot', cpu: 35.46 },
+        { id: 'ocr7', name: 'BEEFEATER 70CL', cat: 'Ginebra', stock: 18, unit: 'bot', cpu: 11.08 },
+        { id: 'ocr8', name: 'JOHNNIE WALKER BLACK LABEL', cat: 'Whisky', stock: 18, unit: 'bot', cpu: 20.43 },
+        { id: 'ocr9', name: 'SAINT GERMAIN 70CL', cat: 'Licor', stock: 2, unit: 'bot', cpu: 23.50 }
+      ];
+      setParsed(mockParsed);
+      setStep(2);
+    }, 4500);
   };
 
   const removeItem = (id) => setParsed(p => p.filter(x => x.id !== id));
@@ -1587,33 +1288,41 @@ function ImportModal({ onClose }) {
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'18px 24px', borderBottom:`1px solid ${C.border2}` }}>
           <div>
             <div style={{ fontSize:'13px', fontWeight:700, letterSpacing:'4px', color:C.text }}>IMPORTAR ALMACÉN</div>
-            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1px', marginTop:3 }}>
+            <div style={{ fontSize:'13px', color:C.textSec, letterSpacing:'1px', marginTop:3 }}>
               {step===1?'Pega tu CSV o sube el archivo de inventario':'Revisa los productos antes de confirmar'}
             </div>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-            <span style={{ fontSize:'10px', color:step===1?C.orange:C.textSec, letterSpacing:'2px' }}>01 CARGAR</span>
-            <span style={{ fontSize:'10px', color:C.border2 }}>──</span>
-            <span style={{ fontSize:'10px', color:step===2?C.orange:C.textSec, letterSpacing:'2px' }}>02 CONFIRMAR</span>
+            <span style={{ fontSize:'13px', color:step===1?C.orange:C.textSec, letterSpacing:'2px' }}>01 CARGAR</span>
+            <span style={{ fontSize:'13px', color:C.border2 }}>──</span>
+            <span style={{ fontSize:'13px', color:step===2?C.orange:C.textSec, letterSpacing:'2px' }}>02 CONFIRMAR</span>
             <button onClick={onClose} style={{ background:'none',border:'none',cursor:'pointer',color:C.textSec,display:'flex',marginLeft:8 }}><X size={16}/></button>
           </div>
         </div>
+
+        {step===0 && (
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'60px 0', gap:20 }}>
+            <div className="barops-spinner" style={{ width:50, height:50, border:`3px solid ${C.border2}`, borderTopColor:C.teal, borderRadius:'50%', animation:'spin 1s linear infinite' }} />
+            <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
+            <div style={{ color:C.teal, fontFamily:F, fontSize:'14px', letterSpacing:'2px' }}>{loadingMsg}</div>
+          </div>
+        )}
 
         {step===1 && (
           <div style={{ padding:'24px', overflowY:'auto' }}>
             {/* Template download */}
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 16px', background:C.tealBg, border:`1px solid ${C.teal}33`, borderRadius:3, marginBottom:18 }}>
               <div>
-                <div style={{ fontSize:'11px', color:C.teal, fontWeight:700, letterSpacing:'2px' }}>PLANTILLA CSV</div>
-                <div style={{ fontSize:'11px', color:C.textSec, marginTop:2 }}>Columnas: nombre · categoria · stock · unidad · precio · volumen_cl</div>
+                <div style={{ fontSize:'14px', color:C.teal, fontWeight:700, letterSpacing:'2px' }}>PLANTILLA CSV</div>
+                <div style={{ fontSize:'14px', color:C.textSec, marginTop:2 }}>Columnas: nombre · categoria · stock · unidad · precio · volumen_cl</div>
               </div>
-              <Btn variant="outline" onClick={downloadTemplate} sx={{ padding:'7px 14px', fontSize:'10px', borderColor:C.teal, color:C.teal }}>
+              <Btn variant="outline" onClick={downloadTemplate} sx={{ padding:'12px 20px', fontSize:'13px', borderColor:C.teal, color:C.teal }}>
                 DESCARGAR
               </Btn>
             </div>
 
             {/* Format hint */}
-            <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>
+            <div style={{ fontSize:'13px', color:C.textSec, letterSpacing:'1px', marginBottom:8 }}>
               UNIDADES ACEPTADAS: <span style={{ color:C.text }}>bot / l / cl / ud / kg</span>
               &nbsp;·&nbsp; Si usas <span style={{ color:C.text }}>bot</span>, añade columna <span style={{ color:C.text }}>volumen_cl</span> (ej: 70 para 70cl)
             </div>
@@ -1626,7 +1335,7 @@ function ImportModal({ onClose }) {
               style={{
                 width:'100%', height:200, padding:'12px', background:C.cardAlt,
                 border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F,
-                fontSize:'12px', color:C.text, outline:'none', resize:'vertical',
+                fontSize:'14px', color:C.text, outline:'none', resize:'vertical',
                 lineHeight:'1.6', boxSizing:'border-box',
               }}
             />
@@ -1634,21 +1343,25 @@ function ImportModal({ onClose }) {
             {/* Or file input */}
             <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:12 }}>
               <input ref={fileRef} type="file" accept=".csv,.txt" onChange={handleFile} style={{ display:'none' }}/>
-              <Btn variant="ghost" onClick={()=>fileRef.current?.click()} sx={{ padding:'8px 16px', fontSize:'10px' }}>
+              <Btn variant="ghost" onClick={()=>fileRef.current?.click()} sx={{ padding:'8px 16px', fontSize:'13px' }}>
                 CARGAR ARCHIVO .CSV
               </Btn>
-              <span style={{ fontSize:'11px', color:C.textSec }}>— o pega directamente en el área de texto</span>
+              <span style={{ fontSize:'14px', color:C.textSec }}>— o pega directamente en el área de texto</span>
             </div>
 
             {parseErr && (
-              <div style={{ marginTop:12, padding:'10px 14px', background:C.redBg, border:`1px solid #EF444433`, borderRadius:3, fontSize:'12px', color:'#EF4444' }}>
+              <div style={{ marginTop:12, padding:'10px 14px', background:C.redBg, border:`1px solid #EF444433`, borderRadius:3, fontSize:'14px', color:'#EF4444' }}>
                 ⚠ {parseErr}
               </div>
             )}
 
-            <div style={{ display:'flex', justifyContent:'flex-end', marginTop:20 }}>
-              <Btn onClick={handleAnalyze} sx={{ padding:'10px 28px', fontSize:'11px', letterSpacing:'2px' }}>
-                ANALIZAR →
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:20 }}>
+              <input ref={imageRef} type="file" accept="image/*" onChange={handleImageSelected} style={{ display:'none' }}/>
+              <Btn variant="teal" onClick={() => imageRef.current?.click()} sx={{ padding:'10px 24px', fontSize:'14px', letterSpacing:'1px', display:'flex', alignItems:'center', gap:8 }}>
+                <Camera size={16}/> ESCANEAR ALBARÁN (IA)
+              </Btn>
+              <Btn onClick={handleAnalyze} sx={{ padding:'10px 28px', fontSize:'14px', letterSpacing:'2px' }}>
+                ANALIZAR CSV →
               </Btn>
             </div>
           </div>
@@ -1657,7 +1370,7 @@ function ImportModal({ onClose }) {
         {step===2 && (
           <div style={{ display:'flex', flexDirection:'column', minHeight:0 }}>
             {parseErrors.length>0 && (
-              <div style={{ padding:'10px 24px', background:C.amberBg, borderBottom:`1px solid ${C.amber}33`, fontSize:'11px', color:C.amber }}>
+              <div style={{ padding:'10px 24px', background:C.amberBg, borderBottom:`1px solid ${C.amber}33`, fontSize:'14px', color:C.amber }}>
                 ⚠ {parseErrors.length} fila(s) ignorada(s) por precio inválido
               </div>
             )}
@@ -1666,18 +1379,18 @@ function ImportModal({ onClose }) {
                 <thead>
                   <tr style={{ background:C.cardAlt, borderBottom:`1px solid ${C.border2}` }}>
                     {['NOMBRE','CATEGORÍA','STOCK','UNIDAD','€/UNIDAD','ACCIÓN'].map(h=>(
-                      <th key={h} style={{ padding:'10px 16px', textAlign:'left', fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
+                      <th key={h} style={{ padding:'10px 16px', textAlign:'left', fontSize:'12px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {parsed.map((item,i)=>(
                     <tr key={item.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
-                      <td style={{ padding:'10px 16px', fontSize:'12px', color:C.text, fontWeight:600 }}>{item.name}</td>
-                      <td style={{ padding:'10px 16px', fontSize:'11px', color:C.textSec }}>{item.cat}</td>
-                      <td style={{ padding:'10px 16px', fontSize:'12px', color:C.text }}>{item.stock}</td>
-                      <td style={{ padding:'10px 16px', fontSize:'11px', color:C.textSec }}>{item.unit}</td>
-                      <td style={{ padding:'10px 16px', fontSize:'12px', color:C.teal, fontWeight:700 }}>€{item.cpu.toFixed(4)}</td>
+                      <td style={{ padding:'10px 16px', fontSize:'14px', color:C.text, fontWeight:600 }}>{item.name}</td>
+                      <td style={{ padding:'10px 16px', fontSize:'14px', color:C.textSec }}>{item.cat}</td>
+                      <td style={{ padding:'10px 16px', fontSize:'14px', color:C.text }}>{item.stock}</td>
+                      <td style={{ padding:'10px 16px', fontSize:'14px', color:C.textSec }}>{item.unit}</td>
+                      <td style={{ padding:'10px 16px', fontSize:'14px', color:C.teal, fontWeight:700 }}>€{item.cpu.toFixed(4)}</td>
                       <td style={{ padding:'10px 16px' }}>
                         <button onClick={()=>removeItem(item.id)} style={{ background:'none',border:'none',cursor:'pointer',color:'#EF4444',display:'flex',padding:'2px' }}>
                           <Trash2 size={13}/>
@@ -1688,16 +1401,16 @@ function ImportModal({ onClose }) {
                 </tbody>
               </table>
               {parsed.length===0&&(
-                <div style={{ textAlign:'center', padding:'40px', fontSize:'12px', color:C.textSec }}>
+                <div style={{ textAlign:'center', padding:'40px', fontSize:'14px', color:C.textSec }}>
                   Has eliminado todos los productos. Vuelve atrás para revisar.
                 </div>
               )}
             </div>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'16px 24px', borderTop:`1px solid ${C.border2}` }}>
-              <Btn variant="ghost" onClick={()=>setStep(1)} sx={{ padding:'9px 18px', fontSize:'10px' }}>← VOLVER</Btn>
+              <Btn variant="ghost" onClick={()=>setStep(1)} sx={{ padding:'9px 18px', fontSize:'13px' }}>← VOLVER</Btn>
               <div style={{ display:'flex', alignItems:'center', gap:16 }}>
-                <span style={{ fontSize:'11px', color:C.textSec }}>{parsed.length} producto{parsed.length!==1?'s':''} listos para importar</span>
-                <Btn disabled={parsed.length===0} onClick={handleConfirm} sx={{ padding:'10px 28px', fontSize:'11px', letterSpacing:'2px' }}>
+                <span style={{ fontSize:'14px', color:C.textSec }}>{parsed.length} producto{parsed.length!==1?'s':''} listos para importar</span>
+                <Btn disabled={parsed.length===0} onClick={handleConfirm} sx={{ padding:'10px 28px', fontSize:'14px', letterSpacing:'2px' }}>
                   CONFIRMAR E IMPORTAR
                 </Btn>
               </div>
@@ -1807,11 +1520,11 @@ function InlineStock({ item, onSaved, setToast }) {
     >
       <div style={{ display:'flex', alignItems:'baseline', gap:4 }}>
         <span style={{ fontFamily:F, fontSize:'16px', fontWeight:700, color:C.text }}>{parseFloat(item.stock_actual)||0}</span>
-        <span style={{ fontFamily:F, fontSize:'10px', color:C.textSec }}>{item.unidad}</span>
+        <span style={{ fontFamily:F, fontSize:'13px', color:C.textSec }}>{item.unidad}</span>
       </div>
       <div style={{ 
         fontFamily:F, 
-        fontSize:'8px', 
+        fontSize:'12px', 
         color:C.orange, 
         letterSpacing:'1px', 
         fontWeight:700,
@@ -1858,7 +1571,7 @@ function InlineStock({ item, onSaved, setToast }) {
             textAlign: 'center'
           }}
         />
-        <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec, fontWeight: 700 }}>{item.unidad}</span>
+        <span style={{ fontFamily:F, fontSize:'14px', color:C.textSec, fontWeight: 700 }}>{item.unidad}</span>
       </div>
       <div style={{ display:'flex', gap:4 }}>
         <button 
@@ -1871,7 +1584,7 @@ function InlineStock({ item, onSaved, setToast }) {
             borderRadius: 3,
             cursor:'pointer', 
             color:'#000', 
-            fontSize:'10px', 
+            fontSize:'13px', 
             fontWeight:800,
             padding: '6px 0',
             letterSpacing: '1px'
@@ -1888,7 +1601,7 @@ function InlineStock({ item, onSaved, setToast }) {
             borderRadius: 3,
             cursor:'pointer', 
             color:C.textSec, 
-            fontSize:'10px', 
+            fontSize:'13px', 
             fontWeight:800,
             padding: '6px 0',
             letterSpacing: '1px'
@@ -1998,11 +1711,11 @@ function ProductDrawer({ item, isOpen, onClose, onSaved, setToast }) {
   const estadoCol  = estadoStr==='CRITICO'?C.red:estadoStr==='PREVENTIVO'?C.amber:C.teal;
 
   const inputStyle = {
-    width:'100%', padding:'8px 10px', fontFamily:F, fontSize:'12px',
+    width:'100%', padding:'8px 10px', fontFamily:F, fontSize:'14px',
     background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3,
     color:C.text, outline:'none',
   };
-  const labelStyle = { display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 };
+  const labelStyle = { display:'block', fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 };
 
   return (
     <>
@@ -2024,7 +1737,7 @@ function ProductDrawer({ item, isOpen, onClose, onSaved, setToast }) {
         <div style={{ display:'flex', borderBottom:`1px solid ${C.border2}`, flexShrink:0 }}>
           {[['producto','PRODUCTO'],['historial','HISTORIAL']].map(([id,label])=>(
             <button key={id} onClick={()=>setTab(id)} style={{
-              flex:1, padding:'12px', fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700,
+              flex:1, padding:'12px', fontFamily:F, fontSize:'13px', letterSpacing:'2px', fontWeight:700,
               background:'none', border:'none', cursor:'pointer',
               color:tab===id?C.orange:C.textSec,
               borderBottom:tab===id?`2px solid ${C.orange}`:'2px solid transparent',
@@ -2058,13 +1771,13 @@ function ProductDrawer({ item, isOpen, onClose, onSaved, setToast }) {
                 <div>
                   <label style={labelStyle}>STOCK MINIMO</label>
                   <input type="number" style={inputStyle} value={form.stock_minimo} onChange={e=>f('stock_minimo',e.target.value)}/>
-                  <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, marginTop:3 }}>Alerta cuando baje de este nivel</div>
+                  <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginTop:3 }}>Alerta cuando baje de este nivel</div>
                 </div>
               </div>
               <div>
                 <label style={labelStyle}>COSTE UNITARIO (€)</label>
                 <input type="number" style={inputStyle} value={form.coste_unitario} onChange={e=>f('coste_unitario',e.target.value)}/>
-                <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, marginTop:3 }}>Coste por {form.unidad} de este producto</div>
+                <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginTop:3 }}>Coste por {form.unidad} de este producto</div>
               </div>
               <div>
                 <label style={labelStyle}>PROVEEDOR</label>
@@ -2085,33 +1798,33 @@ function ProductDrawer({ item, isOpen, onClose, onSaved, setToast }) {
               {/* Resumen */}
               <div style={{ background:'#1A1A1A', border:`1px solid ${C.border}`, borderRadius:4, padding:'14px 16px' }}>
                 <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
-                  <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec }}>Valor en inventario</span>
+                  <span style={{ fontFamily:F, fontSize:'14px', color:C.textSec }}>Valor en inventario</span>
                   <span style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:C.teal }}>€{valorTotal}</span>
                 </div>
                 <div style={{ display:'flex', justifyContent:'space-between' }}>
-                  <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec }}>Estado</span>
-                  <span style={{ fontFamily:F, fontSize:'11px', fontWeight:700, color:estadoCol }}>{estadoStr}</span>
+                  <span style={{ fontFamily:F, fontSize:'14px', color:C.textSec }}>Estado</span>
+                  <span style={{ fontFamily:F, fontSize:'14px', fontWeight:700, color:estadoCol }}>{estadoStr}</span>
                 </div>
               </div>
             </div>
           ) : (
             <div>
               {loadingHist ? (
-                <div style={{ textAlign:'center', padding:32, fontFamily:F, fontSize:'12px', color:C.textSec }}>Cargando historial...</div>
+                <div style={{ textAlign:'center', padding:32, fontFamily:F, fontSize:'14px', color:C.textSec }}>Cargando historial...</div>
               ) : hist.length===0 ? (
                 <div style={{ textAlign:'center', padding:32 }}>
-                  <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec }}>Sin movimientos registrados todavia</div>
+                  <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec }}>Sin movimientos registrados todavia</div>
                 </div>
               ) : (
                 <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
                   {hist.map(m=>(
                     <div key={m.id} style={{ padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, display:'flex', alignItems:'center', gap:12 }}>
-                      <div style={{ minWidth:60, fontFamily:F, fontSize:'10px', color:C.textSec }}>{fmtFecha(m.fecha||m.created_at)}</div>
+                      <div style={{ minWidth:60, fontFamily:F, fontSize:'13px', color:C.textSec }}>{fmtFecha(m.fecha||m.created_at)}</div>
                       <Badge label={(m.tipo||'ajuste').toUpperCase()} color={tipoColor[m.tipo]||C.amber} bg={(tipoColor[m.tipo]||C.amber)+'18'}/>
                       <span style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:(m.cantidad||0)>=0?C.teal:C.red }}>
                         {(m.cantidad||0)>=0?'+':''}{m.cantidad||0}
                       </span>
-                      <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec, flex:1 }}>{m.motivo||''}</span>
+                      <span style={{ fontFamily:F, fontSize:'14px', color:C.textSec, flex:1 }}>{m.motivo||''}</span>
                     </div>
                   ))}
                 </div>
@@ -2121,7 +1834,7 @@ function ProductDrawer({ item, isOpen, onClose, onSaved, setToast }) {
         </div>
         {/* Footer save */}
         <div style={{ padding:'16px 24px', borderTop:`1px solid ${C.border2}`, flexShrink:0 }}>
-          <Btn onClick={handleSave} disabled={saving} sx={{ width:'100%', justifyContent:'center', padding:'13px', fontSize:'11px', letterSpacing:'2px' }}>
+          <Btn onClick={handleSave} disabled={saving} sx={{ width:'100%', justifyContent:'center', padding:'13px', fontSize:'14px', letterSpacing:'2px' }}>
             {saving?'GUARDANDO...':'GUARDAR CAMBIOS'}
           </Btn>
         </div>
@@ -2132,7 +1845,7 @@ function ProductDrawer({ item, isOpen, onClose, onSaved, setToast }) {
 
 // ─── SCREEN 2: INVENTARIO ─────────────────────────────────────────────────────
 function Inventario() {
-  const { inventoryLoading = false } = useApp() || {};
+  const { inventoryLoading = false, cartItems, setCartItems, setShowCartDrawer, userRole } = useApp() || {};
   const [items, setItems]         = useState([]);   // raw DB rows
   const [loading, setLoading]     = useState(true);
   const [riskFilter, setRiskFilter]   = useState('all');
@@ -2232,10 +1945,43 @@ function Inventario() {
   };
 
   const handlePedir = (p) => {
-    const tel = p.telefono_proveedor;
-    const msg = encodeURIComponent(`Hola, necesito reponer ${p.nombre}. Stock actual: ${p.stock_actual} ${p.unidad}.`);
-    if (tel) { window.open(`https://wa.me/${tel.replace(/\s+/g,'')}?text=${msg}`, '_blank'); }
-    else { navigator.clipboard?.writeText(decodeURIComponent(msg)); setToast('Mensaje copiado al portapapeles'); }
+    if (setCartItems) {
+      setCartItems(prev => {
+        const ex = prev.find(i => i.id === p.id);
+        if (ex) return prev.map(i => i.id === p.id ? { ...i, qty: i.qty + 1 } : i);
+        return [...prev, { ...p, qty: 1 }];
+      });
+      setToast('Añadido al carrito');
+    }
+  };
+
+  const handleGenerarPedidoCompleto = () => {
+    if (!setCartItems) return;
+    
+    // DEMO: Populate the cart with the AI Recommended Mock items
+    const mockToOrder = [
+      { id: 'mock1', nombre: 'Aperol', categoria: 'Aperitivo', qty: 6, unidad: 'botellas' },
+      { id: 'mock2', nombre: 'Campari', categoria: 'Aperitivo', qty: 4, unidad: 'botellas' },
+      { id: 'mock3', nombre: "Gin Hendrick's", categoria: 'Ginebra', qty: 3, unidad: 'botellas' },
+      { id: 'mock4', nombre: 'Limones frescos', categoria: 'Frutas', qty: 3, unidad: 'kg' },
+      { id: 'mock5', nombre: 'Vermut Martini', categoria: 'Vermut', qty: 2, unidad: 'botellas' }
+    ];
+
+    setCartItems(prev => {
+      let newCart = [...prev];
+      mockToOrder.forEach(p => {
+        const ex = newCart.find(i => i.id === p.id);
+        if (ex) {
+          ex.qty += p.qty;
+        } else {
+          newCart.push({ ...p });
+        }
+      });
+      return newCart;
+    });
+    
+    setToast('Recomendación IA añadida al carrito.');
+    if (setShowCartDrawer) setTimeout(() => setShowCartDrawer(true), 600);
   };
 
   if (loading || inventoryLoading) return (
@@ -2250,11 +1996,11 @@ function Inventario() {
       <Package size={48} color={C.textSec} style={{ marginBottom:16 }}/>
       <h2 style={{ color:C.text, fontSize:'20px', letterSpacing:'2px', marginBottom:8 }}>INVENTARIO VACIO</h2>
       <p style={{ color:C.textSec, fontSize:'13px', marginBottom:24 }}>No hay productos registrados en la base de datos.</p>
-      <Btn onClick={()=>setShowImport(true)} sx={{ padding:'12px 24px', fontSize:'11px', letterSpacing:'2px' }}>IMPORTAR INVENTARIO INICIAL</Btn>
+      <Btn onClick={()=>setShowImport(true)} sx={{ padding:'12px 24px', fontSize:'14px', letterSpacing:'2px' }}>IMPORTAR INVENTARIO INICIAL</Btn>
     </div>
   );
 
-  const TH = { padding:'10px 14px', textAlign:'left', fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700, fontFamily:F, whiteSpace:'nowrap' };
+  const TH = { padding:'10px 14px', textAlign:'left', fontSize:'12px', color:C.textSec, letterSpacing:'2px', fontWeight:700, fontFamily:F, whiteSpace:'nowrap' };
 
   return (
     <div style={{
@@ -2281,9 +2027,11 @@ function Inventario() {
               <span>· €{valorTotal.toFixed(0)} en stock</span>
             </p>
           </div>
-          <Btn variant="outline" onClick={()=>setShowImport(true)} sx={{ padding:'9px 18px', fontSize:'10px', letterSpacing:'2px', width:isMobile?'100%':'auto' }}>
-            IMPORTAR ALMACEN
-          </Btn>
+          {userRole === 'manager' && (
+            <Btn variant="outline" onClick={()=>setShowImport(true)} sx={{ padding:'9px 18px', fontSize:'13px', letterSpacing:'2px', width:isMobile?'100%':'auto', marginRight: (!isMobile && cartItems && cartItems.length > 0) ? '130px' : '0', transition: 'all 0.2s ease' }}>
+              IMPORTAR ALMACÉN
+            </Btn>
+          )}
         </div>
       </div>
 
@@ -2390,10 +2138,10 @@ function Inventario() {
 
                         <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
                           <div style={{ fontFamily:F, fontSize:'13px', fontWeight:700, color:C.text }}>{p.nombre}</div>
-                          <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>{p.categoria||'—'}</div>
+                          <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, marginTop:2 }}>{p.categoria||'—'}</div>
                           {p.proveedor && (
-                            <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, marginTop:2, display:'flex', alignItems:'center', gap:4 }}>
-                              <span style={{ fontSize:'8px' }}>▲</span>{p.proveedor}
+                            <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginTop:2, display:'flex', alignItems:'center', gap:4 }}>
+                              <span style={{ fontSize:'12px' }}>▲</span>{p.proveedor}
                             </div>
                           )}
                         </td>
@@ -2408,20 +2156,20 @@ function Inventario() {
                         </td>
 
                         <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
-                          <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>MIN</div>
-                          <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec }}>{parseFloat(p.stock_minimo)||0} {p.unidad}</div>
+                          <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>MIN</div>
+                          <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec }}>{parseFloat(p.stock_minimo)||0} {p.unidad}</div>
                         </td>
 
                         <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
-                          <div style={{ fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>€{parseFloat(p.coste_unitario||0).toFixed(2)}</div>
-                          <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2 }}>€{valStock} total</div>
+                          <div style={{ fontFamily:F, fontSize:'14px', color:C.text, fontWeight:700 }}>€{parseFloat(p.coste_unitario||0).toFixed(2)}</div>
+                          <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, marginTop:2 }}>€{valStock} total</div>
                         </td>
 
                         <td style={{ padding:'14px 14px', verticalAlign:'middle' }}>
                           {repDate ? (
-                            <div style={{ fontFamily:F, fontSize:'11px', color:repDate.warn?C.amber:C.textSec }}>{repDate.text}</div>
+                            <div style={{ fontFamily:F, fontSize:'14px', color:repDate.warn?C.amber:C.textSec }}>{repDate.text}</div>
                           ) : (
-                            <div style={{ fontFamily:F, fontSize:'11px', color:'#444' }}>Sin datos</div>
+                            <div style={{ fontFamily:F, fontSize:'14px', color:'#444' }}>Sin datos</div>
                           )}
                         </td>
 
@@ -2429,12 +2177,12 @@ function Inventario() {
                           <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
                             {esCrit && (
                               <button onClick={()=>handlePedir(p)} style={{
-                                fontFamily:F, fontSize:'9px', letterSpacing:'1.5px', fontWeight:700,
-                                padding:'4px 10px', borderRadius:2, cursor:'pointer',
+                                fontFamily:F, fontSize:'12px', letterSpacing:'1.5px', fontWeight:700,
+                                padding:'8px 16px', borderRadius:2, cursor:'pointer',
                                 background:C.orange, color:'#000', border:'none',
                               }}>PEDIR</button>
                             )}
-                            <Btn variant="ghost" onClick={()=>setDrawerItem(p)} sx={{ padding:'4px 10px', fontSize:'9px' }}>
+                            <Btn variant="ghost" onClick={()=>setDrawerItem(p)} sx={{ padding:'8px 16px', fontSize:'12px' }}>
                               EDITAR
                             </Btn>
                           </div>
@@ -2457,54 +2205,54 @@ function Inventario() {
                     <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
                       <div>
                         <div style={{ fontSize:'13px', fontWeight:700, color:C.text }}>{p.nombre}</div>
-                        <div style={{ fontSize:'10px', color:C.textSec, marginTop:3 }}>{p.categoria||'—'}</div>
-                        {p.proveedor && <div style={{ fontSize:'9px', color:C.textSec, marginTop:2 }}>▲ {p.proveedor}</div>}
+                        <div style={{ fontSize:'13px', color:C.textSec, marginTop:3 }}>{p.categoria||'—'}</div>
+                        {p.proveedor && <div style={{ fontSize:'12px', color:C.textSec, marginTop:2 }}>▲ {p.proveedor}</div>}
                       </div>
 
                       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                         <div>
-                          <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>STOCK</div>
+                          <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>STOCK</div>
                           <InlineStock item={p} onSaved={handleStockSaved} setToast={setToast}/>
                           <StockMiniBar stock={p.stock_actual} minimo={p.stock_minimo}/>
                         </div>
                         <div>
-                          <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>ESTADO</div>
+                          <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>ESTADO</div>
                           <EstadoBadge stock={p.stock_actual} minimo={p.stock_minimo}/>
                         </div>
                       </div>
 
                       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                         <div>
-                          <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>MINIMO</div>
-                          <div style={{ fontSize:'12px', color:C.textSec }}>{parseFloat(p.stock_minimo)||0} {p.unidad}</div>
+                          <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>MINIMO</div>
+                          <div style={{ fontSize:'14px', color:C.textSec }}>{parseFloat(p.stock_minimo)||0} {p.unidad}</div>
                         </div>
                         <div>
-                          <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>COSTE UNITARIO</div>
-                          <div style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>€{parseFloat(p.coste_unitario||0).toFixed(2)}</div>
+                          <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>COSTE UNITARIO</div>
+                          <div style={{ fontSize:'14px', color:C.text, fontWeight:700 }}>€{parseFloat(p.coste_unitario||0).toFixed(2)}</div>
                         </div>
                       </div>
 
                       <div>
-                        <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>VALOR EN STOCK</div>
-                        <div style={{ fontSize:'11px', color:C.text, fontWeight:700 }}>€{valStock}</div>
+                        <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>VALOR EN STOCK</div>
+                        <div style={{ fontSize:'14px', color:C.text, fontWeight:700 }}>€{valStock}</div>
                       </div>
 
                       {repDate && (
                         <div>
-                          <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>ÚLTIMA REPOSICIÓN</div>
-                          <div style={{ fontSize:'11px', color:repDate.warn?C.amber:C.textSec }}>{repDate.text}</div>
+                          <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'1px', marginBottom:4 }}>ÚLTIMA REPOSICIÓN</div>
+                          <div style={{ fontSize:'14px', color:repDate.warn?C.amber:C.textSec }}>{repDate.text}</div>
                         </div>
                       )}
 
                       <div style={{ display:'flex', gap:8, marginTop:8 }}>
                         {esCrit && (
                           <button onClick={()=>handlePedir(p)} style={{
-                            flex:1, fontFamily:F, fontSize:'10px', letterSpacing:'1.5px', fontWeight:700,
+                            flex:1, fontFamily:F, fontSize:'13px', letterSpacing:'1.5px', fontWeight:700,
                             padding:'10px', borderRadius:4, cursor:'pointer',
                             background:C.orange, color:'#000', border:'none'
                           }}>PEDIR</button>
                         )}
-                        <Btn variant="ghost" onClick={()=>setDrawerItem(p)} sx={{ flex:1, padding:'10px', fontSize:'10px' }}>
+                        <Btn variant="ghost" onClick={()=>setDrawerItem(p)} sx={{ flex:1, padding:'10px', fontSize:'13px' }}>
                           EDITAR
                         </Btn>
                       </div>
@@ -2522,7 +2270,7 @@ function Inventario() {
         <Card accent={C.purple} sx={{ padding:20 }}>
           <SLabel label="PREDICCION ESTE FIN DE SEMANA" color={C.purple} icon={Zap}/>
           {[["Gin Tonic Hendrick's","~52 uds"],["Aperol Spritz","~48 uds"],["Negroni","~38 uds"],["Mojito","~35 uds"],["Old Fashioned","~22 uds"]].map(([n,u],i)=>(
-            <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'7px 0', borderBottom:`1px solid ${C.border}`, fontSize:'12px' }}>
+            <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'7px 0', borderBottom:`1px solid ${C.border}`, fontSize:'14px' }}>
               <span style={{ color:C.textSec }}>#{i+1} {n}</span>
               <span style={{ color:C.purple, fontWeight:700 }}>{u}</span>
             </div>
@@ -2531,7 +2279,7 @@ function Inventario() {
         <Card accent={C.amber} sx={{ padding:20 }}>
           <SLabel label="COSTE TEORICO VS REAL" color={C.amber} icon={TrendingUp}/>
           {[['Coste teorico ventas','€4.280',C.textSec],['Coste real registrado','€4.990',C.amber],['Diferencia (merma)','+€710',C.red],['Porcentaje de merma','14.2%',C.red],['Objetivo BarOps','< 8%',C.teal]].map(([l,v,co],i)=>(
-            <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'7px 0', borderBottom:`1px solid ${C.border}`, fontSize:'12px' }}>
+            <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'7px 0', borderBottom:`1px solid ${C.border}`, fontSize:'14px' }}>
               <span style={{ color:C.textSec }}>{l}</span><span style={{ color:co, fontWeight:700 }}>{v}</span>
             </div>
           ))}
@@ -2539,15 +2287,15 @@ function Inventario() {
         <Card accent={C.teal} sx={{ padding:20 }}>
           <SLabel label="PEDIDO RECOMENDADO IA" color={C.teal} icon={ShoppingCart}/>
           {[["Aperol","6 botellas","HOY",C.red],["Campari","4 botellas","HOY",C.red],["Gin Hendrick's","3 botellas","MANANA",C.amber],["Limones frescos","3 kg","MANANA",C.amber],["Vermut Martini","2 botellas","ESTA SEM.",C.teal]].map(([n,q,u,co],i)=>(
-            <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'6px 0', borderBottom:`1px solid ${C.border}`, fontSize:'12px' }}>
+            <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'6px 0', borderBottom:`1px solid ${C.border}`, fontSize:'14px' }}>
               <span style={{ color:C.text }}>{n}</span>
               <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                <span style={{ color:C.textSec, fontSize:'11px' }}>{q}</span>
-                <span style={{ color:co, fontWeight:700, fontSize:'9px', letterSpacing:'1px' }}>{u}</span>
+                <span style={{ color:C.textSec, fontSize:'14px' }}>{q}</span>
+                <span style={{ color:co, fontWeight:700, fontSize:'12px', letterSpacing:'1px' }}>{u}</span>
               </div>
             </div>
           ))}
-          <Btn variant="teal" sx={{ width:'100%', marginTop:14, justifyContent:'center', padding:'9px', letterSpacing:'2px', fontSize:'10px' }}>GENERAR PEDIDO COMPLETO</Btn>
+          {userRole === 'manager' && <Btn variant="teal" onClick={handleGenerarPedidoCompleto} sx={{ width:'100%', marginTop:14, justifyContent:'center', padding:'9px', letterSpacing:'2px', fontSize:'13px' }}>GENERAR PEDIDO COMPLETO</Btn>}
         </Card>
       </div>}
     </div>
@@ -2579,11 +2327,11 @@ function Staffing() {
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
         <div>
           <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>STAFFING</h1>
-          <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
+          <p style={{ fontFamily:F, fontSize:'14px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
             Semana 28 Abr – 3 May · {openPending.length} turno{openPending.length!==1?'s':''} sin cubrir
           </p>
         </div>
-        <Btn onClick={()=>setToast('Formulario de turno urgente abierto')} sx={{ padding:'10px 20px', fontSize:'11px' }}>
+        <Btn onClick={()=>setToast('Formulario de turno urgente abierto')} sx={{ padding:'10px 20px', fontSize:'14px' }}>
           <Plus size={14}/> PUBLICAR TURNO URGENTE
         </Btn>
       </div>
@@ -2597,7 +2345,7 @@ function Staffing() {
           { label:'URGENTES',        value:String(openPending.filter(s=>s.status==='urgent').length),                                             color:'#EF4444'},
         ].map(({ label,value,color },i)=>(
           <Card key={i} accent={color} sx={{ padding:'14px 18px', background:`${color}0D` }}>
-            <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>{label}</div>
+            <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>{label}</div>
             <div style={{ fontSize:'26px', color, fontWeight:700, letterSpacing:'1px', lineHeight:1 }}>{value}</div>
           </Card>
         ))}
@@ -2610,7 +2358,7 @@ function Staffing() {
         <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <AlertTriangle size={13} color='#EF4444'/>
-            <span style={{ fontFamily:F, fontSize:'11px', color:'#EF4444', letterSpacing:'3px', fontWeight:700 }}>NECESITAN COBERTURA</span>
+            <span style={{ fontFamily:F, fontSize:'14px', color:'#EF4444', letterSpacing:'3px', fontWeight:700 }}>NECESITAN COBERTURA</span>
           </div>
 
           {OPEN_SHIFTS.map(shift=>{
@@ -2634,16 +2382,16 @@ function Staffing() {
                       }
                     </div>
                     <div style={{ display:'flex', gap:16 }}>
-                      <span style={{ fontSize:'12px', color:C.textSec }}>{shift.date}</span>
-                      <span style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{shift.time}</span>
-                      <span style={{ fontSize:'12px', color:C.orange, fontWeight:700 }}>{shift.cost}</span>
+                      <span style={{ fontSize:'14px', color:C.textSec }}>{shift.date}</span>
+                      <span style={{ fontSize:'14px', color:C.text, fontWeight:700 }}>{shift.time}</span>
+                      <span style={{ fontSize:'14px', color:C.orange, fontWeight:700 }}>{shift.cost}</span>
                     </div>
                   </div>
                   {isAssigned&&(
                     <div style={{ textAlign:'right' }}>
-                      <div style={{ fontSize:'12px', color:C.teal }}>→ {assigned[shift.id]}</div>
+                      <div style={{ fontSize:'14px', color:C.teal }}>→ {assigned[shift.id]}</div>
                       <button onClick={()=>setAssigned(p=>{const n={...p};delete n[shift.id];return n;})}
-                        style={{ background:'none',border:'none',color:C.textSec,fontFamily:F,fontSize:'10px',cursor:'pointer',marginTop:2,letterSpacing:'0.5px' }}>
+                        style={{ background:'none',border:'none',color:C.textSec,fontFamily:F,fontSize:'13px',cursor:'pointer',marginTop:2,letterSpacing:'0.5px' }}>
                         desasignar
                       </button>
                     </div>
@@ -2652,7 +2400,7 @@ function Staffing() {
                 {/* suggestions */}
                 {!isAssigned&&(
                   <div style={{ padding:'12px 16px' }}>
-                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>SUGERENCIAS DE COBERTURA</div>
+                    <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:8 }}>SUGERENCIAS DE COBERTURA</div>
                     <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
                       {matchedTalent.map(p=>(
                         <div key={p.id} style={{
@@ -2665,7 +2413,7 @@ function Staffing() {
                             <div>
                               <div style={{ fontSize:'13px', color:C.text, fontWeight:700 }}>{p.name}</div>
                               <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:2 }}>
-                                <span style={{ fontSize:'10px', color:C.textSec }}>{p.spec}</span>
+                                <span style={{ fontSize:'13px', color:C.textSec }}>{p.spec}</span>
                                 <Stars rating={p.rating}/>
                               </div>
                             </div>
@@ -2673,14 +2421,14 @@ function Staffing() {
                           <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                             <AvailBadge avail={p.avail}/>
                             <span style={{ fontSize:'14px', color:C.orange, fontWeight:700 }}>{p.rate}</span>
-                            <Btn variant="teal" sx={{ padding:'6px 12px', fontSize:'9px' }} onClick={()=>doAssign(shift.id,p.name)}>
+                            <Btn variant="teal" sx={{ padding:'10px 18px', fontSize:'12px' }} onClick={()=>doAssign(shift.id,p.name)}>
                               <UserCheck size={11}/> ASIGNAR
                             </Btn>
                           </div>
                         </div>
                       ))}
                       {matchedTalent.length===0&&(
-                        <div style={{ fontSize:'12px', color:C.textSec, padding:'8px 0' }}>Sin coincidencias — amplía la búsqueda</div>
+                        <div style={{ fontSize:'14px', color:C.textSec, padding:'8px 0' }}>Sin coincidencias — amplía la búsqueda</div>
                       )}
                     </div>
                   </div>
@@ -2693,11 +2441,11 @@ function Staffing() {
           <button onClick={()=>setCovOpen(p=>!p)} style={{
             display:'flex', alignItems:'center', gap:8, background:'none',
             border:`1px solid ${C.border2}`, borderRadius:3, padding:'10px 14px',
-            cursor:'pointer', width:'100%', fontFamily:F, color:C.textSec, fontSize:'11px', letterSpacing:'2px',
+            cursor:'pointer', width:'100%', fontFamily:F, color:C.textSec, fontSize:'14px', letterSpacing:'2px',
           }}>
             {covOpen?<ChevronUp size={13}/>:<ChevronDown size={13}/>}
             TURNOS CUBIERTOS ESTA SEMANA ({COVERED_SHIFTS.length})
-            <span style={{ marginLeft:'auto', color:C.teal, fontSize:'12px', fontWeight:700 }}>
+            <span style={{ marginLeft:'auto', color:C.teal, fontSize:'14px', fontWeight:700 }}>
               €{COVERED_SHIFTS.reduce((a,s)=>a+parseInt(s.cost.replace('€','')),0)}
             </span>
           </button>
@@ -2706,15 +2454,15 @@ function Staffing() {
               {COVERED_SHIFTS.map(s=>(
                 <Card key={s.id} sx={{ padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                   <div>
-                    <div style={{ fontSize:'11px', color:C.textSec, marginBottom:2 }}>{s.date} · {s.time}</div>
+                    <div style={{ fontSize:'14px', color:C.textSec, marginBottom:2 }}>{s.date} · {s.time}</div>
                     <div style={{ fontSize:'13px', color:C.text, fontWeight:700 }}>{s.profile}</div>
                   </div>
                   <div style={{ display:'flex', alignItems:'center', gap:12 }}>
                     <div style={{ textAlign:'right' }}>
-                      <div style={{ fontSize:'12px', color:C.teal, fontWeight:700 }}>→ {s.pro}</div>
+                      <div style={{ fontSize:'14px', color:C.teal, fontWeight:700 }}>→ {s.pro}</div>
                       <Stars rating={s.rating}/>
                     </div>
-                    <span style={{ fontSize:'12px', color:C.textSec }}>{s.cost}</span>
+                    <span style={{ fontSize:'14px', color:C.textSec }}>{s.cost}</span>
                     <Badge label="CUBIERTO" color={C.teal} bg={C.tealBg}/>
                   </div>
                 </Card>
@@ -2727,12 +2475,12 @@ function Staffing() {
         <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <Users size={13} color={C.teal}/>
-            <span style={{ fontFamily:F, fontSize:'11px', color:C.teal, letterSpacing:'3px', fontWeight:700 }}>RED DE TALENTO</span>
+            <span style={{ fontFamily:F, fontSize:'14px', color:C.teal, letterSpacing:'3px', fontWeight:700 }}>RED DE TALENTO</span>
           </div>
           <div style={{ display:'flex', gap:6 }}>
             {[['all','TODOS'],['today','HOY'],['weekend','FINDE']].map(([id,label])=>(
               <button key={id} onClick={()=>setAF(id)} style={{
-                flex:1, padding:'6px 4px', fontFamily:F, fontSize:'9px', letterSpacing:'1.5px', fontWeight:700,
+                flex:1, padding:'6px 4px', fontFamily:F, fontSize:'12px', letterSpacing:'1.5px', fontWeight:700,
                 cursor:'pointer', borderRadius:2,
                 background:availFilter===id?C.teal:C.cardAlt,
                 color:availFilter===id?'#000':C.textSec,
@@ -2747,7 +2495,7 @@ function Staffing() {
                   <Avatar ini={p.ini} size={38}/>
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontSize:'13px', color:C.text, fontWeight:700 }}>{p.name}</div>
-                    <div style={{ fontSize:'10px', color:C.textSec, margin:'2px 0 4px' }}>{p.spec}</div>
+                    <div style={{ fontSize:'13px', color:C.textSec, margin:'2px 0 4px' }}>{p.spec}</div>
                     <Stars rating={p.rating}/>
                   </div>
                   <div style={{ textAlign:'right', flexShrink:0 }}>
@@ -2757,13 +2505,13 @@ function Staffing() {
                 </div>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                   <div style={{ display:'flex', flexWrap:'wrap', gap:4 }}>
-                    {p.tags.map(t=>(
-                      <span key={t} style={{ padding:'2px 6px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'9px', color:C.textSec }}>
+                    {(p.tags||[]).map(t=>(
+                      <span key={t} style={{ padding:'2px 6px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'12px', color:C.textSec }}>
                         {t}
                       </span>
                     ))}
                   </div>
-                  <Btn disabled={p.avail==='unavailable'} onClick={()=>setToast(`Solicitud enviada a ${p.name}`)} sx={{ marginLeft:8, flexShrink:0, padding:'5px 10px', fontSize:'9px' }}>
+                  <Btn disabled={p.avail==='unavailable'} onClick={()=>setToast(`Solicitud enviada a ${p.name}`)} sx={{ marginLeft:8, flexShrink:0, padding:'5px 10px', fontSize:'12px' }}>
                     CONTRATAR
                   </Btn>
                 </div>
@@ -2778,6 +2526,7 @@ function Staffing() {
 
 // ─── SCREEN 4: AGENTE IA — CONECTADO A CLAUDE ─────────────────────────────────
 function AgenteIA() {
+  const { customInv, localName } = useApp() || { customInv: [], localName: 'Mi Local' };
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -2792,13 +2541,39 @@ function AgenteIA() {
   const bottomRef               = useRef(null);
 
   const CHIPS = [
-    '¿Cómo mejorar mi margen en Gin Tonics?',
-    'Genera la lista de pedido para este finde',
+    '¿Cuál fue el producto más vendido ayer?',
+    '¿Qué licores se me van a agotar este fin de semana?',
     '¿Cuál es mi cóctel más rentable?',
     '¿Qué bartender me recomiendas para el sábado?',
   ];
 
   useEffect(()=>{ bottomRef.current?.scrollIntoView({ behavior:'smooth' }); },[messages, loading]);
+
+  const buildSystemPrompt = () => {
+    let inventoryText = 'No hay inventario registrado.';
+    if (customInv && customInv.length > 0) {
+      inventoryText = customInv.map(item => {
+        const riskIndicator = item.risk === 'critical' ? '🔴 CRÍTICO' : item.risk === 'medium' ? '🟡 MEDIO' : '🟢 ESTABLE';
+        return `- ${item.name}: ${item.stock} → ${item.days} días restantes ${riskIndicator} (Coste: ${item.cost})`;
+      }).join('\n');
+    }
+
+    return `Eres el Agente BarOps de ${localName}. Eres un analista de negocio experto en hostelería.
+Tienes acceso en tiempo real a los datos del local. Respondes siempre en español, de forma directa y con datos concretos.
+Cuando calcules costes, usa los precios de proveedor exactos. Usa emojis con moderación solo cuando aporten claridad.
+Termina siempre con una recomendación accionable en 1 línea.
+
+== INVENTARIO ACTUAL (DATOS REALES DE BASE DE DATOS) ==
+${inventoryText}
+
+== VENTAS DE AYER Y PREVISIONES (SIMULADAS) ==
+- Producto más vendido ayer: Gin Tonic (Hendrick's) con 45 unidades.
+- Previsión para este fin de semana: Pico de demanda esperado (120-150 personas).
+- Rotación crítica: Si algún producto crítico tiene menos de 2 días de stock, lanza alerta roja urgente de pedido.
+- Ticket medio actual: €32.
+
+Actúa como si estos datos fueran 100% reales y utilízalos para dar recomendaciones expertas.`;
+  };
 
   const send = async (overrideText) => {
     const text = overrideText !== undefined ? overrideText : input;
@@ -2809,11 +2584,37 @@ function AgenteIA() {
     const next = [...messages, userMsg];
     setMessages(next);
     setLoading(true);
+
+    // MODO DEMO: Respuestas predeterminadas sin necesidad de API KEY
+    const txt = text.toLowerCase();
+    let mockResponse = null;
+
+    if (txt.includes('vendido ayer')) {
+      mockResponse = "El producto más vendido ayer fue el **Gin Tonic (Hendrick's)** con 45 unidades, generando un ingreso bruto de **€495**.\n\nTe recomiendo revisar el stock de tónica premium, ya que nos quedan solo 24 unidades y podríamos quedarnos cortos para el sábado.";
+    } else if (txt.includes('agotar este fin de semana')) {
+      mockResponse = "Basado en tu stock actual y la previsión del fin de semana (120-150 personas), se te agotarán de forma inminente:\n\n- **Aperol** (0.8L restantes, 1 día de autonomía)\n- **Campari** (1.1L restantes, 2 días de autonomía)\n\n🔴 **ACCIÓN RECOMENDADA:** Realizar pedido urgente de 6 botellas de Aperol y 4 de Campari a Eurocash Madrid hoy mismo antes de las 14:00.";
+    } else if (txt.includes('rentable')) {
+      mockResponse = "Tu cóctel más rentable actualmente es el **Gin Tonic con Hendrick's**. Tiene un margen de beneficio del **87.8%** (Coste: €1.34, Venta: €11).\n\n🟢 **ACCIÓN RECOMENDADA:** Sugiero promocionarlo en las pizarras como 'Cóctel de Autor' este fin de semana para derivar la demanda hacia el producto de mayor margen.";
+    } else if (txt.includes('bartender')) {
+      mockResponse = "Para el sábado (pico de demanda), te recomiendo a **Laura Sánchez**. Tiene una valoración de ⭐5.0 en la red de talento y su coste es de €19/h. Es especialista en coctelería clásica y maneja excelentemente el alto volumen de pedidos bajo presión.";
+    }
+
+    if (mockResponse) {
+      setTimeout(() => {
+        setMessages(prev=>[...prev,{ id:Date.now()+1, role:'agent', time:getNow(), text:mockResponse }]);
+        setLoading(false);
+      }, 1500); // Simulamos el tiempo de "pensamiento" de la IA
+      return;
+    }
+
     try {
-      const reply = await callClaude(next);
+      const dynamicPrompt = buildSystemPrompt();
+      const reply = await callClaude(next, dynamicPrompt);
       setMessages(prev=>[...prev,{ id:Date.now()+1, role:'agent', time:getNow(), text:reply }]);
     } catch(e) {
-      if (e.message==='API_KEY_MISSING') { setApiErr(true); }
+      if (e.message==='API_KEY_MISSING' || e.message.includes('404')) { 
+        setMessages(prev=>[...prev,{ id:Date.now()+1, role:'agent', time:getNow(), text:`El Agente IA está actualmente en **Modo Demo**.\n\nPara ver todo su potencial, haz clic en cualquiera de las sugerencias de arriba para ver análisis predeterminados simulados.\n\nPara habilitar el chat libre e inteligente, necesitas configurar tu API KEY en el archivo \`.env.local\`.` }]); 
+      }
       else { setMessages(prev=>[...prev,{ id:Date.now()+1, role:'agent', time:getNow(), text:`Error de conexión: ${e.message}` }]); }
     } finally { setLoading(false); }
   };
@@ -2828,16 +2629,16 @@ function AgenteIA() {
           </div>
           <div>
             <div style={{ fontFamily:F, fontSize:isMobile?'12px':'15px', fontWeight:700, color:C.orange, letterSpacing:'4px' }}>AGENTE BAROPS</div>
-            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, marginTop:2, display:isMobile?'none':'block' }}>Tu analista de negocio personal — activo 24/7</div>
+            <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, marginTop:2, display:isMobile?'none':'block' }}>Tu analista de negocio personal — activo 24/7</div>
           </div>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:isMobile?8:12 }}>
-          <span style={{ padding:'5px 12px', background:C.purpleBg, border:`1px solid ${C.purple}44`, borderRadius:2, fontFamily:F, fontSize:'8px', color:C.purple, letterSpacing:'1.5px', fontWeight:700 }}>
+          <span style={{ padding:'5px 12px', background:C.purpleBg, border:`1px solid ${C.purple}44`, borderRadius:2, fontFamily:F, fontSize:'12px', color:C.purple, letterSpacing:'1.5px', fontWeight:700 }}>
             CLAUDE POWERED
           </span>
           <div style={{ display:'flex', alignItems:'center', gap:7 }}>
             <div style={{ width:7, height:7, borderRadius:'50%', background:loading?C.amber:C.teal, boxShadow:`0 0 8px ${loading?C.amber:C.teal}` }}/>
-            <span style={{ fontFamily:F, fontSize:'9px', color:loading?C.amber:C.teal, letterSpacing:'1.5px', whiteSpace:'nowrap' }}>
+            <span style={{ fontFamily:F, fontSize:'12px', color:loading?C.amber:C.teal, letterSpacing:'1.5px', whiteSpace:'nowrap' }}>
               {loading?'PROCESANDO':'EN LÍNEA'}
             </span>
           </div>
@@ -2846,7 +2647,7 @@ function AgenteIA() {
 
       {/* API key error */}
       {apiErr&&(
-        <div style={{ margin:'16px 28px 0', padding:'14px 18px', background:'#EF444415', border:`1px solid #EF444444`, borderRadius:4, fontFamily:F, fontSize:'12px', color:'#EF4444', lineHeight:'1.8' }}>
+        <div style={{ margin:'16px 28px 0', padding:'14px 18px', background:'#EF444415', border:`1px solid #EF444444`, borderRadius:4, fontFamily:F, fontSize:'14px', color:'#EF4444', lineHeight:'1.8' }}>
           <strong>API KEY no configurada.</strong> Para activar el agente:<br/>
           1. Abre <code style={{ background:'#2a2a2a', padding:'1px 6px', borderRadius:2 }}>barops-preview/.env.local</code><br/>
           2. Sustituye <code style={{ background:'#2a2a2a', padding:'1px 6px', borderRadius:2 }}>TU_API_KEY_AQUI</code> por tu clave de Anthropic<br/>
@@ -2858,7 +2659,7 @@ function AgenteIA() {
       <div style={{ flex:1, overflowY:'auto', padding:isMobile?'16px 12px':'24px 32px', display:'flex', flexDirection:'column', gap:isMobile?12:18 }}>
         {messages.map(msg=>(
           <div key={msg.id} style={{ display:'flex', flexDirection:'column', alignSelf:msg.role==='user'?'flex-end':'flex-start', maxWidth:isMobile?'85%':'72%' }}>
-            <div style={{ fontFamily:F, fontSize:'8px', color:C.textSec, letterSpacing:'1px', marginBottom:5, padding:'0 4px', textAlign:msg.role==='user'?'right':'left' }}>
+            <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1px', marginBottom:5, padding:'0 4px', textAlign:msg.role==='user'?'right':'left' }}>
               {msg.role==='user'?'TÚ':'⚡ AGENTE'} · {msg.time}
             </div>
             <div style={{
@@ -2875,7 +2676,7 @@ function AgenteIA() {
         ))}
         {loading&&(
           <div style={{ display:'flex', flexDirection:'column', alignSelf:'flex-start', maxWidth:isMobile?'85%':'72%' }}>
-            <div style={{ fontFamily:F, fontSize:'8px', color:C.textSec, letterSpacing:'1px', marginBottom:5 }}>⚡ AGENTE · {getNow()}</div>
+            <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1px', marginBottom:5 }}>⚡ AGENTE · {getNow()}</div>
             <div style={{ padding:isMobile?'12px 14px':'14px 18px', background:C.card, border:`1px solid ${C.border2}`, borderRadius:'2px 8px 8px 8px' }}>
               <TypingDots/>
             </div>
@@ -2889,7 +2690,7 @@ function AgenteIA() {
         {!isMobile&&(
           <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
             {CHIPS.map((chip,i)=>(
-              <button key={i} onClick={()=>send(chip)} style={{ padding:'5px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'12px', color:C.textSec, cursor:'pointer' }}>
+              <button key={i} onClick={()=>send(chip)} style={{ padding:'5px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:2, fontFamily:F, fontSize:'14px', color:C.textSec, cursor:'pointer' }}>
                 {chip}
               </button>
             ))}
@@ -2904,7 +2705,7 @@ function AgenteIA() {
             placeholder={isMobile?'Pregunta...':'Pregunta lo que necesites sobre tu negocio...'}
             style={{ flex:1, padding:isMobile?'12px 14px':'12px 16px', background:C.card, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:isMobile?'14px':'13px', color:C.text, outline:'none', opacity:loading?.6:1 }}
           />
-          <Btn onClick={()=>send()} disabled={loading} sx={{ padding:isMobile?'12px 20px':'12px 24px', fontSize:'11px', width:isMobile?'100%':'auto', justifyContent:'center' }}>
+          <Btn onClick={()=>send()} disabled={loading} sx={{ padding:isMobile?'12px 20px':'12px 24px', fontSize:'14px', width:isMobile?'100%':'auto', justifyContent:'center' }}>
             <Send size={isMobile?13:14}/> {isMobile?'ENVIAR':'ENVIAR'}
           </Btn>
         </div>
@@ -2914,7 +2715,7 @@ function AgenteIA() {
 }
 
 // ─── SCREEN 5: ANALYTICS ──────────────────────────────────────────────────────
-const TT_STYLE = { background:C.card, border:`1px solid #333`, fontFamily:F, fontSize:'11px', borderRadius:3, color:C.text };
+const TT_STYLE = { background:C.card, border:`1px solid #333`, fontFamily:F, fontSize:'14px', borderRadius:3, color:C.text };
 
 
 // ─── SCREEN 5: ANALYTICS ──────────────────────────────────────────────────────
@@ -2973,7 +2774,7 @@ function Analytics() {
     }
   };
 
-  const TT_STYLE = { background:C.card, border:`1px solid #333`, fontFamily:F, fontSize:'11px', borderRadius:3, color:C.text };
+  const TT_STYLE = { background:C.card, border:`1px solid #333`, fontFamily:F, fontSize:'14px', borderRadius:3, color:C.text };
 
   if (loading) {
     return (
@@ -2987,12 +2788,12 @@ function Analytics() {
     <div style={{ flex:1, padding:isMobile?'20px 16px':'28px 32px', overflowY:'auto', overflowX:'hidden', fontFamily:F, width:'100%' }}>
       <div style={{ marginBottom:isMobile?20:28 }}>
         <h1 style={{ fontFamily:F, fontSize:isMobile?'16px':'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>INTELIGENCIA DE NEGOCIO</h1>
-        <p style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Análisis de rendimiento</p>
+        <p style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>Análisis de rendimiento</p>
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:isMobile?14:18, marginBottom:22 }}>
         <Card sx={{ padding:isMobile?16:20 }}>
-          <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>DISTRIBUCIÓN POR CATEGORÍA</div>
+          <div style={{ fontSize:'13px', color:C.orange, letterSpacing:'2.5px', fontWeight:700, marginBottom:18 }}>DISTRIBUCIÓN POR CATEGORÍA</div>
           {categoryData.length > 0 ? (
             <ResponsiveContainer width="100%" height={isMobile?160:210}>
               <BarChart data={categoryData}>
@@ -3009,14 +2810,14 @@ function Analytics() {
         </Card>
 
         <Card sx={{ padding:isMobile?16:20 }}>
-          <div style={{ fontSize:'10px', color:C.teal, letterSpacing:'2.5px', fontWeight:700, marginBottom:12 }}>TOP 10 PRODUCTOS POR VALOR</div>
+          <div style={{ fontSize:'13px', color:C.teal, letterSpacing:'2.5px', fontWeight:700, marginBottom:12 }}>TOP 10 PRODUCTOS POR VALOR</div>
           {topProducts.length > 0 ? (
             <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight:isMobile?160:210, overflowY:'auto' }}>
               {topProducts.map((p,i) => (
                 <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:`1px solid ${C.border2}`, fontSize:isMobile?'10px':'11px' }}>
                   <div style={{ flex:1 }}>
                     <div style={{ color:C.text, fontWeight:700 }}>#{i+1} {p.nombre}</div>
-                    <div style={{ color:C.textSec, fontSize:'9px' }}>{p.categoria || '-'}</div>
+                    <div style={{ color:C.textSec, fontSize:'12px' }}>{p.categoria || '-'}</div>
                   </div>
                   <div style={{ color:C.teal, fontWeight:700, textAlign:'right', fontSize:isMobile?'10px':'11px' }}>€{p.value.toFixed(2)}</div>
                 </div>
@@ -3029,7 +2830,7 @@ function Analytics() {
       </div>
 
       <Card sx={{ padding:isMobile?16:20 }}>
-        <div style={{ fontSize:'10px', color:C.red, letterSpacing:'2.5px', fontWeight:700, marginBottom:16 }}>⚠ PRODUCTOS EN RIESGO</div>
+        <div style={{ fontSize:'13px', color:C.red, letterSpacing:'2.5px', fontWeight:700, marginBottom:16 }}>⚠ PRODUCTOS EN RIESGO</div>
         {riskProducts.length > 0 ? (
           isMobile ? (
             <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:12, maxHeight:400, overflowY:'auto' }}>
@@ -3037,21 +2838,21 @@ function Analytics() {
                 const diff = parseFloat(p.stock_actual || 0) - parseFloat(p.stock_minimo || 0);
                 return (
                   <div key={i} style={{ padding:12, background:C.cardAlt, borderRadius:4, borderLeft:`3px solid ${diff < -5 ? '#EF4444' : C.orange}` }}>
-                    <div style={{ fontSize:'12px', fontWeight:700, color:C.text, marginBottom:8 }}>{p.nombre}</div>
-                    <div style={{ fontSize:'10px', color:C.textSec, marginBottom:6 }}>{p.categoria || '-'}</div>
-                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, fontSize:'11px' }}>
+                    <div style={{ fontSize:'14px', fontWeight:700, color:C.text, marginBottom:8 }}>{p.nombre}</div>
+                    <div style={{ fontSize:'13px', color:C.textSec, marginBottom:6 }}>{p.categoria || '-'}</div>
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, fontSize:'14px' }}>
                       <div>
-                        <div style={{ color:C.textSec, fontSize:'9px', marginBottom:2 }}>ACTUAL</div>
+                        <div style={{ color:C.textSec, fontSize:'12px', marginBottom:2 }}>ACTUAL</div>
                         <div style={{ color:C.text, fontWeight:700 }}>{p.stock_actual} {p.unidad}</div>
                       </div>
                       <div>
-                        <div style={{ color:C.textSec, fontSize:'9px', marginBottom:2 }}>MÍNIMO</div>
+                        <div style={{ color:C.textSec, fontSize:'12px', marginBottom:2 }}>MÍNIMO</div>
                         <div style={{ color:C.text, fontWeight:700 }}>{p.stock_minimo} {p.unidad}</div>
                       </div>
                     </div>
                     <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${C.border2}` }}>
-                      <div style={{ color:C.textSec, fontSize:'9px', marginBottom:2 }}>DIFERENCIA</div>
-                      <div style={{ fontSize:'12px', fontWeight:700, color:diff < -5 ? '#EF4444' : C.orange }}>{diff} {p.unidad}</div>
+                      <div style={{ color:C.textSec, fontSize:'12px', marginBottom:2 }}>DIFERENCIA</div>
+                      <div style={{ fontSize:'14px', fontWeight:700, color:diff < -5 ? '#EF4444' : C.orange }}>{diff} {p.unidad}</div>
                     </div>
                   </div>
                 );
@@ -3062,7 +2863,7 @@ function Analytics() {
               <thead>
                 <tr style={{ background:C.cardAlt, borderBottom:`1px solid ${C.border2}` }}>
                   {['PRODUCTO','CATEGORÍA','STOCK ACTUAL','STOCK MÍNIMO','DIFERENCIA'].map(h=>(
-                    <th key={h} style={{ padding:'11px 12px', textAlign:'left', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
+                    <th key={h} style={{ padding:'11px 12px', textAlign:'left', fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -3071,11 +2872,11 @@ function Analytics() {
                   const diff = parseFloat(p.stock_actual || 0) - parseFloat(p.stock_minimo || 0);
                   return (
                     <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?'transparent':C.cardAlt }}>
-                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text, fontWeight:700 }}>{p.nombre}</td>
-                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'11px', color:C.textSec }}>{p.categoria || '-'}</td>
-                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.stock_actual} {p.unidad}</td>
-                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', color:C.text }}>{p.stock_minimo} {p.unidad}</td>
-                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'12px', fontWeight:700, color:diff < -5 ? '#EF4444' : C.orange }}>{diff} {p.unidad}</td>
+                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'14px', color:C.text, fontWeight:700 }}>{p.nombre}</td>
+                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'14px', color:C.textSec }}>{p.categoria || '-'}</td>
+                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'14px', color:C.text }}>{p.stock_actual} {p.unidad}</td>
+                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'14px', color:C.text }}>{p.stock_minimo} {p.unidad}</td>
+                      <td style={{ padding:'12px 12px', fontFamily:F, fontSize:'14px', fontWeight:700, color:diff < -5 ? '#EF4444' : C.orange }}>{diff} {p.unidad}</td>
                     </tr>
                   );
                 })}
@@ -3135,14 +2936,14 @@ function CocktailCard({ cocktail, productos=[], onUpdate, onDelete, onEdit }) {
           <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'space-between' }}>
             <div>
               <div style={{ fontSize:'13px', color:C.text, fontWeight:700, marginBottom:3 }}>{cocktail.nombre}</div>
-              {cocktail.descripcion && <div style={{ fontSize:'10px', color:C.textSec, lineHeight:'1.3' }}>{cocktail.descripcion}</div>}
+              {cocktail.descripcion && <div style={{ fontSize:'13px', color:C.textSec, lineHeight:'1.3' }}>{cocktail.descripcion}</div>}
             </div>
             <div style={{ display:'flex', gap:8 }}>
-              <span style={{ fontSize:'8px', color:'#000', background:ESTADO_COLOR[cocktail.estado], padding:'2px 8px', borderRadius:2, fontWeight:700, letterSpacing:'1px' }}>
+              <span style={{ fontSize:'12px', color:'#000', background:ESTADO_COLOR[cocktail.estado], padding:'2px 8px', borderRadius:2, fontWeight:700, letterSpacing:'1px' }}>
                 {ESTADO_LABEL[cocktail.estado]}
               </span>
               <span style={{
-                fontSize:'8px', padding:'2px 8px', borderRadius:2, fontWeight:700, letterSpacing:'1px',
+                fontSize:'12px', padding:'2px 8px', borderRadius:2, fontWeight:700, letterSpacing:'1px',
                 border:`1px solid ${cocktail.tipo === 'clasico' ? C.orange : 'transparent'}`,
                 background:cocktail.tipo === 'autor' ? C.orange : 'transparent',
                 color:cocktail.tipo === 'autor' ? '#000' : C.orange,
@@ -3154,7 +2955,7 @@ function CocktailCard({ cocktail, productos=[], onUpdate, onDelete, onEdit }) {
         </div>
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', padding:'10px 16px', gap:4, borderTop:`1px solid ${C.border}`, borderBottom:`1px solid ${C.border}`, fontSize:'9px' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', padding:'10px 16px', gap:4, borderTop:`1px solid ${C.border}`, borderBottom:`1px solid ${C.border}`, fontSize:'12px' }}>
         <div>
           <div style={{ color:C.textSec, letterSpacing:'1px', marginBottom:2 }}>COSTE</div>
           <div style={{ fontSize:'14px', color:C.orange, fontWeight:700 }}>€{cost.toFixed(2)}</div>
@@ -3169,14 +2970,14 @@ function CocktailCard({ cocktail, productos=[], onUpdate, onDelete, onEdit }) {
         </div>
       </div>
 
-      <div style={{ padding:'8px 16px', borderBottom:`1px solid ${C.border}`, fontSize:'10px', color:stockStatus.sinStock>0?C.red:stockStatus.enRiesgo>0?C.amber:C.teal, fontWeight:700 }}>
+      <div style={{ padding:'8px 16px', borderBottom:`1px solid ${C.border}`, fontSize:'13px', color:stockStatus.sinStock>0?C.red:stockStatus.enRiesgo>0?C.amber:C.teal, fontWeight:700 }}>
         {stockStatus.sinStock > 0 ? `✕ ${stockStatus.sinStock} sin stock` : stockStatus.enRiesgo > 0 ? `⚠ ${stockStatus.enRiesgo} en riesgo` : '● Todo en stock'}
       </div>
 
       <button onClick={()=>setOpen(p=>!p)} style={{
         display:'flex', alignItems:'center', justifyContent:'space-between',
         padding:'8px 16px', background:C.cardAlt, border:'none', cursor:'pointer',
-        fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1px',
+        fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'1px',
       }}>
         VER RECETA {open?<ChevronUp size={11}/>:<ChevronDown size={11}/>}
       </button>
@@ -3184,12 +2985,12 @@ function CocktailCard({ cocktail, productos=[], onUpdate, onDelete, onEdit }) {
       {open && (
         <div style={{ padding:'10px 16px' }}>
           {ings.map(ing=>(
-            <div key={ing.id} style={{ display:'flex', justifyContent:'space-between', padding:'4px 0', fontSize:'10px', borderBottom:`1px solid ${C.border}` }}>
+            <div key={ing.id} style={{ display:'flex', justifyContent:'space-between', padding:'4px 0', fontSize:'13px', borderBottom:`1px solid ${C.border}` }}>
               <span style={{ color:C.textSec }}>{ing.nombre} — {ing.cantidad} {ing.unidad}</span>
               <span style={{ color:C.teal, fontWeight:700 }}>€{(ing.cantidad*ing.coste_unitario).toFixed(3)}</span>
             </div>
           ))}
-          <div style={{ display:'flex', justifyContent:'space-between', padding:'6px 0 0', fontSize:'11px', fontWeight:700, borderTop:`1px solid ${C.border}`, marginTop:4, paddingTop:6 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', padding:'6px 0 0', fontSize:'14px', fontWeight:700, borderTop:`1px solid ${C.border}`, marginTop:4, paddingTop:6 }}>
             <span style={{ color:C.textSec }}>BENEFICIO POR COPA</span>
             <span style={{ color:mc }}>€{(cocktail.precio-cost).toFixed(2)}</span>
           </div>
@@ -3207,7 +3008,7 @@ function CocktailCard({ cocktail, productos=[], onUpdate, onDelete, onEdit }) {
             {menuOpen && (
               <div style={{ position:'absolute', bottom:'100%', right:0, background:C.card, border:`1px solid ${C.border2}`, borderRadius:4, minWidth:180, zIndex:100, marginBottom:4 }}>
                 {menuOptions.map((opt,i)=>(
-                  <button key={i} onClick={opt.action} style={{ display:'block', width:'100%', padding:'10px 14px', textAlign:'left', background:'none', border:'none', borderBottom:i<menuOptions.length-1?`1px solid ${C.border}`:'none', cursor:'pointer', fontFamily:F, fontSize:'11px', color:opt.color||C.text, transition:'background 0.1s' }} onMouseEnter={e=>e.target.style.background=C.cardAlt} onMouseLeave={e=>e.target.style.background='none'}>
+                  <button key={i} onClick={opt.action} style={{ display:'block', width:'100%', padding:'10px 14px', textAlign:'left', background:'none', border:'none', borderBottom:i<menuOptions.length-1?`1px solid ${C.border}`:'none', cursor:'pointer', fontFamily:F, fontSize:'14px', color:opt.color||C.text, transition:'background 0.1s' }} onMouseEnter={e=>e.target.style.background=C.cardAlt} onMouseLeave={e=>e.target.style.background='none'}>
                     {opt.label}
                   </button>
                 ))}
@@ -3412,7 +3213,7 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
       <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:1999, onClick:handleClose }}/>
       <div style={{ position:'fixed', right:0, top:0, bottom:0, width:580, background:C.card, zIndex:2000, overflowY:'auto', borderLeft:`1px solid ${C.border2}`, boxShadow:'-4px 0 12px rgba(0,0,0,0.4)' }}>
         <div style={{ padding:'24px 24px', borderBottom:`1px solid ${C.border2}`, display:'flex', justifyContent:'space-between', alignItems:'center', position:'sticky', top:0, background:C.card, zIndex:10 }}>
-          <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>EDITAR CÓCTEL</span>
+          <span style={{ fontFamily:F, fontSize:'14px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>EDITAR CÓCTEL</span>
           <button onClick={handleClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.textSec }}>
             <X size={20}/>
           </button>
@@ -3421,7 +3222,7 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
         <div style={{ display:'flex', gap:0, borderBottom:`1px solid ${C.border2}`, padding:'0 24px' }}>
           {['identidad', 'receta', 'carta', 'alergenos'].map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
-              flex:1, padding:'14px 0', fontFamily:F, fontSize:'10px', letterSpacing:'2px', fontWeight:700,
+              flex:1, padding:'14px 0', fontFamily:F, fontSize:'13px', letterSpacing:'2px', fontWeight:700,
               background:'none', border:'none', cursor:'pointer', color:tab===t?C.orange:C.textSec,
               borderBottom:tab===t?`2px solid ${C.orange}`:'2px solid transparent', transition:'all 0.2s'
             }}>
@@ -3438,28 +3239,28 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
                   {photoPreview ? (
                     <img src={photoPreview} style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
                   ) : (
-                    <div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center', color:C.textSec, fontSize:'28px' }}>🍹</div>
+                    <img src="/logo.png" style={{ width:'100%', height:'100%', objectFit:'contain', padding: '10px', opacity: 0.8 }} alt="Logo" />
                   )}
                   <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} style={{ position:'absolute', inset:0, opacity:0, cursor:'pointer' }}/>
                 </div>
                 <div style={{ flex:1, display:'flex', flexDirection:'column', gap:8 }}>
-                  <label style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>FOTO</label>
-                  <Btn variant="outline" onClick={() => fileInputRef.current?.click()} sx={{ fontSize:'11px', padding:'8px 12px' }}>
+                  <label style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', fontWeight:700 }}>FOTO</label>
+                  <Btn variant="outline" onClick={() => fileInputRef.current?.click()} sx={{ fontSize:'14px', padding:'8px 12px' }}>
                     {photoFile ? 'Cambiar' : 'Subir'} Foto
                   </Btn>
-                  {uploading && <span style={{ fontSize:'10px', color:C.teal }}>Subiendo...</span>}
+                  {uploading && <span style={{ fontSize:'13px', color:C.teal }}>Subiendo...</span>}
                 </div>
               </div>
 
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                 <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>NOMBRE *</div>
+                  <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>NOMBRE *</div>
                   <input value={form.nombre} onChange={e => handleFormChange('nombre', e.target.value)}
                     style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
                   />
                 </div>
                 <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>PRECIO (€) *</div>
+                  <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>PRECIO (€) *</div>
                   <input type="number" step="0.5" min="0" value={form.precio} onChange={e => handleFormChange('precio', e.target.value)}
                     style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
                   />
@@ -3468,7 +3269,7 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
 
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                 <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>TIPO</div>
+                  <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>TIPO</div>
                   <select value={form.tipo} onChange={e => handleFormChange('tipo', e.target.value)}
                     style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
                   >
@@ -3477,7 +3278,7 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
                   </select>
                 </div>
                 <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>ESTADO</div>
+                  <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>ESTADO</div>
                   <select value={form.estado} onChange={e => handleFormChange('estado', e.target.value)}
                     style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
                   >
@@ -3493,13 +3294,13 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
               {form.estado === 'temporada' && (
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                   <div>
-                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>DESDE</div>
+                    <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>DESDE</div>
                     <input type="date" value={form.fecha_inicio_temporada} onChange={e => handleFormChange('fecha_inicio_temporada', e.target.value)}
                       style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
                     />
                   </div>
                   <div>
-                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>HASTA</div>
+                    <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>HASTA</div>
                     <input type="date" value={form.fecha_fin_temporada} onChange={e => handleFormChange('fecha_fin_temporada', e.target.value)}
                       style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
                     />
@@ -3512,14 +3313,14 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
           {tab === 'receta' && (
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:18 }}>
               <div>
-                <div style={{ fontSize:'10px', color:C.orange, letterSpacing:'2px', marginBottom:12, fontWeight:700 }}>INGREDIENTES</div>
+                <div style={{ fontSize:'13px', color:C.orange, letterSpacing:'2px', marginBottom:12, fontWeight:700 }}>INGREDIENTES</div>
                 {formIngs.length > 0 && (
                   <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:14 }}>
                     {formIngs.map((fi, idx) => (
                       <div key={idx} style={{ display:'flex', alignItems:'center', gap:8, padding:'10px', background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:3 }}>
                         <div style={{ flex:1, minWidth:0 }}>
-                          <div style={{ fontSize:'11px', color:C.text, fontWeight:700 }}>{fi.nombre}</div>
-                          <div style={{ fontSize:'9px', color:C.textSec }}>{fi.cantidad} {fi.unidad} • €{(fi.cantidad * fi.coste_unitario).toFixed(3)}</div>
+                          <div style={{ fontSize:'14px', color:C.text, fontWeight:700 }}>{fi.nombre}</div>
+                          <div style={{ fontSize:'12px', color:C.textSec }}>{fi.cantidad} {fi.unidad} • €{(fi.cantidad * fi.coste_unitario).toFixed(3)}</div>
                         </div>
                         <button onClick={() => { setFormIngs(p => p.filter((_, i) => i !== idx)); setUnsaved(true); }} style={{ background:'none', border:'none', cursor:'pointer', color:C.red, padding:0 }}>
                           <Trash2 size={13}/>
@@ -3531,12 +3332,12 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
 
                 <div style={{ position:'relative', marginBottom:12 }}>
                   <input value={ingSearch} onChange={e => { setIngSearch(e.target.value); setNewIng(p => ({...p, id:''})); }}
-                    placeholder="🔍 Buscar..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                    placeholder="🔍 Buscar..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box' }}
                   />
                   {ingSearch.trim() && filtered.length > 0 && (
                     <div style={{ position:'absolute', top:'100%', left:0, right:0, background:C.card, border:`1px solid ${C.border2}`, borderTop:'none', borderRadius:'0 0 3px 3px', maxHeight:150, overflowY:'auto', zIndex:20 }}>
                       {filtered.slice(0, 6).map(ing => (
-                        <div key={ing.id} onClick={() => selectIngredient(ing)} style={{ padding:'8px 12px', cursor:'pointer', borderBottom:`1px solid ${C.border}`, background:newIng.id===ing.id?`${C.orange}22`:'transparent', fontSize:'11px', color:C.text }}>
+                        <div key={ing.id} onClick={() => selectIngredient(ing)} style={{ padding:'8px 12px', cursor:'pointer', borderBottom:`1px solid ${C.border}`, background:newIng.id===ing.id?`${C.orange}22`:'transparent', fontSize:'14px', color:C.text }}>
                           {ing.name}
                         </div>
                       ))}
@@ -3547,28 +3348,28 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
                 <div style={{ display:'flex', gap:8, marginBottom:12 }}>
                   <input type="number" step="0.5" min="0" value={newIng.qty} onChange={e => setNewIng(p => ({...p, qty: e.target.value}))}
                     placeholder="Cant." onKeyDown={e => e.key==='Enter' && addIng()}
-                    style={{ width:60, padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                    style={{ width:60, padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box' }}
                   />
                   <select value={newIng.unit} onChange={e => setNewIng(p => ({...p, unit: e.target.value}))}
-                    style={{ width:60, padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                    style={{ width:60, padding:'8px 10px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box' }}
                   >
                     <option>cl</option>
                     <option>ml</option>
                     <option>ud</option>
                     <option>g</option>
                   </select>
-                  <Btn onClick={addIng} sx={{ flex:1, padding:'8px', fontSize:'10px' }}>ADD</Btn>
+                  <Btn onClick={addIng} sx={{ flex:1, padding:'8px', fontSize:'13px' }}>ADD</Btn>
                 </div>
               </div>
 
               <div>
-                <div style={{ fontSize:'10px', color:C.amber, letterSpacing:'2px', marginBottom:12, fontWeight:700 }}>SUGERENCIAS IA</div>
+                <div style={{ fontSize:'13px', color:C.amber, letterSpacing:'2px', marginBottom:12, fontWeight:700 }}>SUGERENCIAS IA</div>
                 <Card sx={{ padding:14, marginBottom:12 }}>
-                  <div style={{ fontSize:'10px', color:C.teal, marginBottom:8, fontWeight:700 }}>Coste Total: €{liveCost.toFixed(2)}</div>
-                  <div style={{ fontSize:'10px', color:C.textSec, marginBottom:12 }}>Precio: €{livePrice.toFixed(2)} | Margen: <span style={{ color:mc, fontWeight:700 }}>{liveMargin.toFixed(1)}%</span></div>
-                  {detectClassicBase() && <div style={{ fontSize:'10px', color:C.orange, marginBottom:8 }}>✓ Base clásica detectada (Gin + Campari + Vermouth)</div>}
+                  <div style={{ fontSize:'13px', color:C.teal, marginBottom:8, fontWeight:700 }}>Coste Total: €{liveCost.toFixed(2)}</div>
+                  <div style={{ fontSize:'13px', color:C.textSec, marginBottom:12 }}>Precio: €{livePrice.toFixed(2)} | Margen: <span style={{ color:mc, fontWeight:700 }}>{liveMargin.toFixed(1)}%</span></div>
+                  {detectClassicBase() && <div style={{ fontSize:'13px', color:C.orange, marginBottom:8 }}>✓ Base clásica detectada (Gin + Campari + Vermouth)</div>}
                   {suggestedPairings().map((s, i) => (
-                    <div key={i} style={{ fontSize:'10px', color:C.teal, marginBottom:6 }}>→ {s}</div>
+                    <div key={i} style={{ fontSize:'13px', color:C.teal, marginBottom:6 }}>→ {s}</div>
                   ))}
                 </Card>
               </div>
@@ -3578,28 +3379,28 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
           {tab === 'carta' && (
             <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
               <div>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>DESCRIPCIÓN</div>
+                <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>DESCRIPCIÓN</div>
                 <input value={form.descripcion} onChange={e => handleFormChange('descripcion', e.target.value)}
-                  placeholder="Breve descripción para la carta..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:60 }}
+                  placeholder="Breve descripción para la carta..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:60 }}
                 />
               </div>
               <div>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>HISTORIA</div>
+                <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>HISTORIA</div>
                 <textarea value={form.historia_coctel} onChange={e => handleFormChange('historia_coctel', e.target.value)}
-                  placeholder="Origen y tradición del cóctel..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:80, resize:'vertical' }}
+                  placeholder="Origen y tradición del cóctel..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:80, resize:'vertical' }}
                 />
               </div>
               <div>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>INSTRUCCIONES</div>
+                <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>INSTRUCCIONES</div>
                 <textarea value={form.instrucciones_preparacion} onChange={e => handleFormChange('instrucciones_preparacion', e.target.value)}
-                  placeholder="Modo de preparación paso a paso..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:80, resize:'vertical' }}
+                  placeholder="Modo de preparación paso a paso..." style={{ width:'100%', padding:'10px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box', minHeight:80, resize:'vertical' }}
                 />
               </div>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                 <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>CRISTALERÍA</div>
+                  <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>CRISTALERÍA</div>
                   <select value={form.cristaleria} onChange={e => handleFormChange('cristaleria', e.target.value)}
-                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box' }}
                   >
                     {CRISTALERIA_OPTIONS.map(opt => (
                       <option key={opt} value={opt}>{opt.toUpperCase()}</option>
@@ -3607,16 +3408,16 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
                   </select>
                 </div>
                 <div>
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>TIEMPO (min)</div>
+                  <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>TIEMPO (min)</div>
                   <input type="number" min="0" value={form.tiempo_preparacion} onChange={e => handleFormChange('tiempo_preparacion', e.target.value)}
-                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                    style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box' }}
                   />
                 </div>
               </div>
               <div>
-                <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>GUARNICIÓN</div>
+                <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6, fontWeight:700 }}>GUARNICIÓN</div>
                 <input value={form.guarnicion} onChange={e => handleFormChange('guarnicion', e.target.value)}
-                  placeholder="p.ej: Twist de naranja, aceituna..." style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'11px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                  placeholder="p.ej: Twist de naranja, aceituna..." style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box' }}
                 />
               </div>
             </div>
@@ -3624,13 +3425,13 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
 
           {tab === 'alergenos' && (
             <div>
-              <div style={{ fontSize:'10px', color:C.textSec, letterSpacing:'2px', marginBottom:16, fontWeight:700 }}>MARCAR LOS QUE APLIQUEN</div>
+              <div style={{ fontSize:'13px', color:C.textSec, letterSpacing:'2px', marginBottom:16, fontWeight:700 }}>MARCAR LOS QUE APLIQUEN</div>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                 {ALLERGENS.map(allg => (
                   <button key={allg} onClick={() => {
                     handleFormChange('alergenos', form.alergenos.includes(allg) ? form.alergenos.filter(a => a!==allg) : [...form.alergenos, allg]);
                   }} style={{
-                    padding:'12px', borderRadius:3, fontFamily:F, fontSize:'10px', border:`1px solid ${form.alergenos.includes(allg)?C.orange:C.border2}`,
+                    padding:'12px', borderRadius:3, fontFamily:F, fontSize:'13px', border:`1px solid ${form.alergenos.includes(allg)?C.orange:C.border2}`,
                     background:form.alergenos.includes(allg)?`${C.orange}22`:C.cardAlt, color:form.alergenos.includes(allg)?C.orange:C.textSec,
                     cursor:'pointer', transition:'all 0.2s'
                   }}>
@@ -3652,9 +3453,9 @@ function EditCocktailModal({ cocktail, isOpen, onClose, onSave, productos=[] }) 
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2001 }}>
           <Card sx={{ padding:28, maxWidth:380 }}>
             <div style={{ marginBottom:20 }}>
-              <span style={{ fontFamily:F, fontSize:'12px', color:C.orange, letterSpacing:'2px', fontWeight:700 }}>¿DESCARTAR CAMBIOS?</span>
+              <span style={{ fontFamily:F, fontSize:'14px', color:C.orange, letterSpacing:'2px', fontWeight:700 }}>¿DESCARTAR CAMBIOS?</span>
             </div>
-            <p style={{ fontFamily:F, fontSize:'11px', color:C.textSec, marginBottom:24 }}>Los cambios sin guardar se perderán.</p>
+            <p style={{ fontFamily:F, fontSize:'14px', color:C.textSec, marginBottom:24 }}>Los cambios sin guardar se perderán.</p>
             <div style={{ display:'flex', gap:10 }}>
               <Btn variant="outline" onClick={() => setShowConfirmClose(false)} sx={{ flex:1, padding:'10px' }}>SEGUIR EDITANDO</Btn>
               <Btn onClick={() => { setShowConfirmClose(false); setUnsaved(false); onClose(); }} sx={{ flex:1, padding:'10px' }}>DESCARTAR</Btn>
@@ -3889,15 +3690,15 @@ function Carta() {
       <div style={{ display:'flex', flexDirection:isMobile?'column':'row', justifyContent:'space-between', alignItems:isMobile?'flex-start':'flex-start', marginBottom:24, gap:isMobile?16:0 }}>
         <div>
           <h1 style={{ fontFamily:F, fontSize:isMobile?'16px':'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>CARTA & COSTES</h1>
-          <p style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
+          <p style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
             {counts.clasicos + counts.autor} activos · Gestión completa
           </p>
         </div>
         <div style={{ display:'flex', gap:isMobile?8:10, flexWrap:isMobile?'wrap':'nowrap', width:isMobile?'100%':'auto' }}>
-          <Btn variant="outline" onClick={() => setShowImportCocteles(true)} sx={{ padding:'10px 16px', fontSize:'10px', flex:isMobile?1:0 }}>
+          <Btn variant="outline" onClick={() => setShowImportCocteles(true)} sx={{ padding:'10px 16px', fontSize:'13px', flex:isMobile?1:0 }}>
             📥 IMPORTAR CSV
           </Btn>
-          <Btn onClick={openForm} sx={{ padding:'10px 20px', fontSize:'11px', flex:isMobile?1:0 }}>
+          <Btn onClick={openForm} sx={{ padding:'10px 20px', fontSize:'14px', flex:isMobile?1:0 }}>
             <Plus size={14}/> NUEVO CÓCTEL
           </Btn>
         </div>
@@ -4018,7 +3819,7 @@ function Carta() {
       {/* Loading state */}
       {loading && (
         <div style={{ display:'flex', justifyContent:'center', alignItems:'center', minHeight:300 }}>
-          <div style={{ fontSize:'12px', color:C.textSec }}>⏳ Cargando cócteles...</div>
+          <div style={{ fontSize:'14px', color:C.textSec }}>⏳ Cargando cócteles...</div>
         </div>
       )}
 
@@ -4039,11 +3840,11 @@ function Carta() {
         ) : (
           <div style={{ textAlign:'center', padding:isMobile?'48px 20px':'64px 20px' }}>
             <div style={{ fontFamily:F, fontSize:'40px', color:C.border2, marginBottom:20 }}>◇</div>
-            <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>
+            <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>
               {tab==='borradores'?'TODAVÍA NO HAY BORRADORES':'NO HAY CÓCTELES EN ESTA CATEGORÍA'}
             </div>
             {(tab==='borradores'||tab==='clasicos'||tab==='autor')&&(
-              <Btn onClick={openForm} sx={{ marginTop:20, padding:'11px 28px', fontSize:'11px' }}>
+              <Btn onClick={openForm} sx={{ marginTop:20, padding:'11px 28px', fontSize:'14px' }}>
                 <Plus size={14}/> CREAR CÓCTEL
               </Btn>
             )}
@@ -4055,7 +3856,7 @@ function Carta() {
       {showForm && (
             <Card accent={C.orange} sx={{ padding:isMobile?16:24, marginBottom:24 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
-                <span style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>NUEVO CÓCTEL</span>
+                <span style={{ fontFamily:F, fontSize:'14px', color:C.orange, letterSpacing:'3px', fontWeight:700 }}>NUEVO CÓCTEL</span>
                 <button onClick={resetForm} style={{ background:'none',border:'none',cursor:'pointer',color:C.textSec,display:'flex' }}><X size={16}/></button>
               </div>
 
@@ -4065,18 +3866,18 @@ function Carta() {
                 <div>
                   <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr 1fr', gap:12, marginBottom:14 }}>
                     <div>
-                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>TIPO *</div>
+                      <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>TIPO *</div>
                       <select value={form.tipo} onChange={e=>setForm(f=>({...f,tipo:e.target.value}))}
-                        style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none' }}
+                        style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none' }}
                       >
                         <option value="clasico">CLÁSICO</option>
                         <option value="autor">DE AUTOR</option>
                       </select>
                     </div>
                     <div>
-                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>ESTADO</div>
+                      <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>ESTADO</div>
                       <select value={form.estado} onChange={e=>setForm(f=>({...f,estado:e.target.value}))}
-                        style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none' }}
+                        style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none' }}
                       >
                         <option value="borrador">BORRADOR</option>
                         <option value="activo">ACTIVO</option>
@@ -4086,7 +3887,7 @@ function Carta() {
                       </select>
                     </div>
                     <div>
-                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>PRECIO DE VENTA (€) *</div>
+                      <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>PRECIO DE VENTA (€) *</div>
                       <input value={form.price} onChange={e=>setForm(f=>({...f,price:e.target.value}))}
                         placeholder="12.00" type="number" step="0.5" min="0"
                         style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
@@ -4095,7 +3896,7 @@ function Carta() {
                   </div>
 
                   <div style={{ marginBottom:14 }}>
-                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE *</div>
+                    <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>NOMBRE *</div>
                     <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}
                       placeholder="Ej: Paradiso Sour"
                       style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'13px', color:C.text, outline:'none', boxSizing:'border-box' }}
@@ -4103,22 +3904,22 @@ function Carta() {
                   </div>
 
                   <div style={{ marginBottom:18 }}>
-                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>DESCRIPCIÓN / NOTAS</div>
+                    <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>DESCRIPCIÓN / NOTAS</div>
                     <input value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))}
                       placeholder="Ej: Versión de la casa con Patrón, zumo de lima y sirope de mango"
-                      style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'12px', color:C.text, outline:'none', boxSizing:'border-box' }}
+                      style={{ width:'100%', padding:'9px 12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:3, fontFamily:F, fontSize:'14px', color:C.text, outline:'none', boxSizing:'border-box' }}
                     />
                   </div>
 
                   <div style={{ marginBottom:18 }}>
-                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>FOTO DEL CÓCTEL</div>
+                    <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>FOTO DEL CÓCTEL</div>
                     <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} style={{ display:'none' }}/>
-                    <Btn variant="outline" onClick={()=>fileInputRef.current?.click()} sx={{ width:'100%', padding:'9px 12px', fontSize:'11px', justifyContent:'center' }}>
+                    <Btn variant="outline" onClick={()=>fileInputRef.current?.click()} sx={{ width:'100%', padding:'9px 12px', fontSize:'14px', justifyContent:'center' }}>
                       📷 SUBIR FOTO
                     </Btn>
                   </div>
 
-                  <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>INGREDIENTES *</div>
+                  <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:10 }}>INGREDIENTES *</div>
 
                   {/* Ingredient rows */}
                   {formIngs.length>0 && (
@@ -4128,16 +3929,16 @@ function Carta() {
                         const cost = db ? db.cpu * parseFloat(fi.qty) : 0;
                         return (
                           <div key={fi.uid} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', background:C.cardAlt, border:`1px solid ${C.border}`, borderRadius:3 }}>
-                            <span style={{ flex:1, fontSize:'12px', color:C.text }}>{db?.name}</span>
-                            <span style={{ fontSize:'12px', color:C.textSec, minWidth:55 }}>{fi.qty} {db?.unit}</span>
-                            <span style={{ fontSize:'12px', color:C.teal, minWidth:52, textAlign:'right', fontWeight:700 }}>€{cost.toFixed(3)}</span>
+                            <span style={{ flex:1, fontSize:'14px', color:C.text }}>{db?.name}</span>
+                            <span style={{ fontSize:'14px', color:C.textSec, minWidth:55 }}>{fi.qty} {db?.unit}</span>
+                            <span style={{ fontSize:'14px', color:C.teal, minWidth:52, textAlign:'right', fontWeight:700 }}>€{cost.toFixed(3)}</span>
                             <button onClick={()=>setFormIngs(p=>p.filter(i=>i.uid!==fi.uid))} style={{ background:'none',border:'none',cursor:'pointer',color:'#EF4444',padding:'0 2px',display:'flex' }}>
                               <Trash2 size={13}/>
                             </button>
                           </div>
                         );
                       })}
-                      <div style={{ textAlign:'right', fontSize:'11px', color:C.textSec, padding:'4px 0' }}>
+                      <div style={{ textAlign:'right', fontSize:'14px', color:C.textSec, padding:'4px 0' }}>
                         Subtotal: <span style={{ color:C.orange, fontWeight:700 }}>€{liveCost.toFixed(3)}</span>
                       </div>
                     </div>
@@ -4156,15 +3957,15 @@ function Carta() {
                         <div style={{ position:'absolute', top:'100%', left:0, right:0, background:C.card, border:`1px solid ${C.border2}`, borderTop:'none', borderRadius:'0 0 3px 3px', maxHeight:200, overflowY:'auto', zIndex:10 }}>
                           {filtered.slice(0,8).map(ing=>(
                             <div key={ing.id} onClick={()=>selectIngredient(ing)} style={{ padding:'8px 12px', cursor:'pointer', borderBottom:`1px solid ${C.border}`, background:newIng.id===ing.id?`${C.orange}22`:'transparent', transition:'all 0.1s' }}>
-                              <div style={{ fontSize:'12px', color:C.text, fontWeight:700 }}>{ing.name}</div>
-                              <div style={{ fontSize:'10px', color:C.textSec }}>@{ing.cat} • {ing.unit}</div>
+                              <div style={{ fontSize:'14px', color:C.text, fontWeight:700 }}>{ing.name}</div>
+                              <div style={{ fontSize:'13px', color:C.textSec }}>@{ing.cat} • {ing.unit}</div>
                             </div>
                           ))}
                         </div>
                       )}
                     </div>
                     <div style={{ width:isMobile?'100%':76, flexShrink:0 }}>
-                      <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CANTIDAD</div>
+                      <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CANTIDAD</div>
                       <input value={newIng.qty} onChange={e=>setNewIng(p=>({...p,qty:e.target.value}))}
                         onKeyDown={e=>e.key==='Enter'&&addIng()}
                         placeholder="cl / ud" type="number" step="0.5" min="0"
@@ -4185,37 +3986,37 @@ function Carta() {
                     </Card>
                   )}
                   <Card accent={mc} sx={{ padding:isMobile?16:20, flex:1 }}>
-                    <div style={{ fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:16 }}>PREVIEW EN TIEMPO REAL</div>
+                    <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:16 }}>PREVIEW EN TIEMPO REAL</div>
 
                     <div style={{ marginBottom:14, display:'grid', gridTemplateColumns:isMobile?'1fr 1fr':'1fr', gap:isMobile?12:0 }}>
                       <div>
-                        <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>COSTE TOTAL</div>
+                        <div style={{ fontSize:'13px', color:C.textSec, marginBottom:4 }}>COSTE TOTAL</div>
                         <div style={{ fontSize:isMobile?'24px':'30px', color:C.orange, fontWeight:700, lineHeight:1 }}>€{liveCost.toFixed(2)}</div>
                       </div>
                       <div>
-                        <div style={{ fontSize:'10px', color:C.textSec, marginBottom:4 }}>PRECIO VENTA</div>
+                        <div style={{ fontSize:'13px', color:C.textSec, marginBottom:4 }}>PRECIO VENTA</div>
                         <div style={{ fontSize:isMobile?'24px':'30px', color:C.text, fontWeight:700, lineHeight:1 }}>
                           {livePrice>0?`€${livePrice.toFixed(2)}`:'—'}
                         </div>
                       </div>
                     </div>
                     <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14 }}>
-                      <div style={{ fontSize:'10px', color:C.textSec, marginBottom:6 }}>MARGEN REAL</div>
+                      <div style={{ fontSize:'13px', color:C.textSec, marginBottom:6 }}>MARGEN REAL</div>
                       <div style={{ fontSize:isMobile?'32px':'38px', fontWeight:700, color:mc, lineHeight:1 }}>
                         {livePrice>0?`${liveMargin.toFixed(1)}%`:'—'}
                       </div>
                       {livePrice>0&&liveCost>0&&(
-                        <div style={{ fontSize:'11px', color:C.textSec, marginTop:8 }}>
+                        <div style={{ fontSize:'14px', color:C.textSec, marginTop:8 }}>
                           Beneficio por copa: <span style={{ color:mc, fontWeight:700 }}>€{(livePrice-liveCost).toFixed(2)}</span>
                         </div>
                       )}
                       {liveMargin>0&&liveMargin<75&&livePrice>0&&(
-                        <div style={{ fontSize:'10px', color:C.amber, marginTop:10, lineHeight:'1.5', padding:'8px 10px', background:C.amberBg, borderRadius:3, border:`1px solid ${C.amber}33` }}>
+                        <div style={{ fontSize:'13px', color:C.amber, marginTop:10, lineHeight:'1.5', padding:'8px 10px', background:C.amberBg, borderRadius:3, border:`1px solid ${C.amber}33` }}>
                           ⚠ Margen por debajo del estándar (75%). Considera subir el precio o simplificar la receta.
                         </div>
                       )}
                       {liveMargin>=80&&livePrice>0&&(
-                        <div style={{ fontSize:'10px', color:C.teal, marginTop:10, padding:'8px 10px', background:C.tealBg, borderRadius:3, border:`1px solid ${C.teal}33` }}>
+                        <div style={{ fontSize:'13px', color:C.teal, marginTop:10, padding:'8px 10px', background:C.tealBg, borderRadius:3, border:`1px solid ${C.teal}33` }}>
                           ✓ Margen saludable para coctelería de autor
                         </div>
                       )}
@@ -4236,6 +4037,235 @@ function Carta() {
               </div>
             </Card>
           )}
+    </div>
+  );
+}
+
+// ─── SCREEN: HISTORIAL DE PEDIDOS ─────────────────────────────────────────────
+function HistorialPedidos() {
+  const { localName } = useApp() || {};
+  const [pedidos, setPedidos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState(null);
+  const [filter, setFilter] = useState('all');
+  const [expandedId, setExpandedId] = useState(null);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const h = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+
+  const fetchPedidos = async () => {
+    if (!supabase) { setLoading(false); return; }
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('pedidos')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setPedidos(data || []);
+    } catch (err) {
+      console.error('Error fetching pedidos:', err);
+      setToast('Error al cargar pedidos');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchPedidos(); }, []);
+
+  const updateEstado = async (id, nuevoEstado) => {
+    if (!supabase) return;
+    try {
+      const { error } = await supabase.from('pedidos').update({ estado: nuevoEstado, updated_at: new Date().toISOString() }).eq('id', id);
+      if (error) throw error;
+      setPedidos(prev => prev.map(p => p.id === id ? { ...p, estado: nuevoEstado } : p));
+      setToast(`Pedido marcado como ${nuevoEstado.toUpperCase()}`);
+    } catch (err) {
+      setToast('Error al actualizar estado');
+    }
+  };
+
+  const estadoConfig = {
+    pendiente: { color: C.amber, bg: C.amberBg, label: 'PENDIENTE' },
+    enviado:   { color: C.teal,  bg: C.tealBg,  label: 'ENVIADO' },
+    recibido:  { color: '#22C55E', bg: '#22C55E15', label: 'RECIBIDO' },
+    cancelado: { color: '#EF4444', bg: '#EF444415', label: 'CANCELADO' },
+  };
+
+  const canalIcon = { whatsapp: '💬', pdf: '📄', manual: '✋' };
+
+  const filtered = filter === 'all' ? pedidos : pedidos.filter(p => p.estado === filter);
+
+  const formatFecha = (iso) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) + ' · ' + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const parseItems = (items) => {
+    try { return typeof items === 'string' ? JSON.parse(items) : items || []; }
+    catch { return []; }
+  };
+
+  return (
+    <div style={{ flex:1, padding: isMobile ? '20px 16px' : '28px 32px', overflowY:'auto', fontFamily:F }}>
+      {toast && <Toast msg={toast} onClose={() => setToast(null)}/>}
+
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24, flexWrap:'wrap', gap:12 }}>
+        <div>
+          <h1 style={{ fontFamily:F, fontSize:'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0 }}>HISTORIAL DE PEDIDOS</h1>
+          <p style={{ fontFamily:F, fontSize:'14px', color:C.textSec, letterSpacing:'1.5px', margin:'5px 0 0' }}>
+            {pedidos.length} pedido{pedidos.length !== 1 ? 's' : ''} registrado{pedidos.length !== 1 ? 's' : ''} · {localName}
+          </p>
+        </div>
+        <Btn onClick={fetchPedidos} variant="outline" sx={{ padding:'8px 16px', fontSize:'12px' }}>
+          <RefreshCw size={12}/> ACTUALIZAR
+        </Btn>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display:'grid', gridTemplateColumns: isMobile ? 'repeat(2,1fr)' : 'repeat(4,1fr)', gap:10, marginBottom:22 }}>
+        {[
+          { label:'TOTAL',      value: String(pedidos.length),                                        color:C.teal },
+          { label:'PENDIENTES', value: String(pedidos.filter(p=>p.estado==='pendiente').length),       color:C.amber },
+          { label:'ENVIADOS',   value: String(pedidos.filter(p=>p.estado==='enviado').length),         color:C.teal },
+          { label:'RECIBIDOS',  value: String(pedidos.filter(p=>p.estado==='recibido').length),        color:'#22C55E' },
+        ].map(({ label, value, color }, i) => (
+          <Card key={i} accent={color} sx={{ padding:'14px 18px', background:`${color}0D` }}>
+            <div style={{ fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:6 }}>{label}</div>
+            <div style={{ fontSize:'26px', color, fontWeight:700, letterSpacing:'1px', lineHeight:1 }}>{value}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div style={{ display:'flex', gap:6, marginBottom:20, flexWrap:'wrap' }}>
+        {[['all','TODOS'],['pendiente','PENDIENTES'],['enviado','ENVIADOS'],['recibido','RECIBIDOS'],['cancelado','CANCELADOS']].map(([id,label]) => (
+          <button key={id} onClick={() => setFilter(id)} style={{
+            padding:'7px 14px', fontFamily:F, fontSize:'12px', letterSpacing:'1.5px', fontWeight:700,
+            cursor:'pointer', borderRadius:3,
+            background: filter===id ? C.orange : C.cardAlt,
+            color: filter===id ? '#000' : C.textSec,
+            border: filter===id ? `1px solid ${C.orange}` : `1px solid ${C.border2}`,
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {/* Pedidos list */}
+      {loading ? (
+        <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+          {[1,2,3].map(i => <Skeleton key={i} height={80}/>)}
+        </div>
+      ) : filtered.length === 0 ? (
+        <Card sx={{ padding:40, textAlign:'center' }}>
+          <ClipboardList size={40} color={C.textSec} style={{ marginBottom:12 }}/>
+          <div style={{ fontSize:'14px', color:C.textSec, letterSpacing:'2px' }}>
+            {filter === 'all' ? 'No hay pedidos registrados aún' : `No hay pedidos ${filter}s`}
+          </div>
+        </Card>
+      ) : (
+        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+          {filtered.map(pedido => {
+            const ec = estadoConfig[pedido.estado] || estadoConfig.pendiente;
+            const items = parseItems(pedido.items);
+            const isExpanded = expandedId === pedido.id;
+
+            return (
+              <Card key={pedido.id} accent={ec.color} sx={{ overflow:'hidden' }}>
+                {/* Header */}
+                <div
+                  onClick={() => setExpandedId(isExpanded ? null : pedido.id)}
+                  style={{
+                    padding:'14px 18px', cursor:'pointer',
+                    display:'flex', justifyContent:'space-between', alignItems:'center',
+                    background: ec.bg, borderBottom: isExpanded ? `1px solid ${ec.color}33` : 'none',
+                  }}
+                >
+                  <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                    <span style={{ fontSize:'16px' }}>{canalIcon[pedido.canal] || '📦'}</span>
+                    <div>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:3 }}>
+                        <span style={{ fontSize:'14px', color:C.text, fontWeight:700 }}>{pedido.proveedor}</span>
+                        <Badge label={ec.label} color={ec.color} bg={ec.bg}/>
+                      </div>
+                      <div style={{ fontSize:'12px', color:C.textSec }}>{formatFecha(pedido.created_at)}</div>
+                    </div>
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                    <span style={{ fontSize:'13px', color:C.textSec }}>{items.length} producto{items.length !== 1 ? 's' : ''}</span>
+                    {isExpanded ? <ChevronUp size={14} color={C.textSec}/> : <ChevronDown size={14} color={C.textSec}/>}
+                  </div>
+                </div>
+
+                {/* Expanded content */}
+                {isExpanded && (
+                  <div style={{ padding:'16px 18px' }}>
+                    {/* Items table */}
+                    <div style={{ marginBottom:16 }}>
+                      {items.map((item, idx) => (
+                        <div key={idx} style={{
+                          display:'flex', justifyContent:'space-between', alignItems:'center',
+                          padding:'8px 0', borderBottom: idx < items.length-1 ? `1px solid ${C.border}` : 'none',
+                        }}>
+                          <div>
+                            <span style={{ fontSize:'14px', color:C.text, fontWeight:600 }}>{item.nombre}</span>
+                            {item.categoria && <span style={{ fontSize:'12px', color:C.textSec, marginLeft:8 }}>{item.categoria}</span>}
+                          </div>
+                          <span style={{ fontSize:'14px', color:C.orange, fontWeight:700 }}>
+                            {item.qty} {item.unidad}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Meta */}
+                    <div style={{ display:'flex', gap:16, marginBottom:16, flexWrap:'wrap' }}>
+                      {pedido.canal && (
+                        <div style={{ fontSize:'12px', color:C.textSec }}>
+                          <span style={{ letterSpacing:'1.5px' }}>CANAL:</span>{' '}
+                          <span style={{ color:C.text, fontWeight:600 }}>{pedido.canal.toUpperCase()}</span>
+                        </div>
+                      )}
+                      {pedido.creado_por && (
+                        <div style={{ fontSize:'12px', color:C.textSec }}>
+                          <span style={{ letterSpacing:'1.5px' }}>CREADO POR:</span>{' '}
+                          <span style={{ color:C.text, fontWeight:600 }}>{pedido.creado_por}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                      {pedido.estado === 'pendiente' && (
+                        <>
+                          <Btn variant="teal" onClick={() => updateEstado(pedido.id, 'enviado')} sx={{ padding:'6px 14px', fontSize:'11px' }}>
+                            <Send size={11}/> MARCAR ENVIADO
+                          </Btn>
+                          <Btn variant="outline" onClick={() => updateEstado(pedido.id, 'cancelado')} sx={{ padding:'6px 14px', fontSize:'11px', color:'#EF4444', borderColor:'#EF444444' }}>
+                            <X size={11}/> CANCELAR
+                          </Btn>
+                        </>
+                      )}
+                      {pedido.estado === 'enviado' && (
+                        <Btn variant="teal" onClick={() => updateEstado(pedido.id, 'recibido')} sx={{ padding:'6px 14px', fontSize:'11px' }}>
+                          <CheckCircle size={11}/> MARCAR RECIBIDO
+                        </Btn>
+                      )}
+                      {(pedido.estado === 'recibido' || pedido.estado === 'cancelado') && (
+                        <span style={{ fontSize:'12px', color:C.textSec, letterSpacing:'1px', fontStyle:'italic' }}>
+                          {pedido.estado === 'recibido' ? '✅ Pedido completado' : '❌ Pedido cancelado'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -4319,15 +4349,15 @@ function Pricing() {
               <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:4 }}>
                 <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.orange }}>€99</span>
                 <span style={{ fontFamily:F, fontSize:'13px', color:C.textSec }}>/mes</span>
-                <span style={{ fontFamily:F, fontSize:'11px', color:C.textSec, textDecoration:'line-through', marginLeft:4 }}>€199</span>
+                <span style={{ fontFamily:F, fontSize:'14px', color:C.textSec, textDecoration:'line-through', marginLeft:4 }}>€199</span>
               </div>
-              <div style={{ fontFamily:F, fontSize:'11px', color:C.orange, fontWeight:700, letterSpacing:'0.5px', lineHeight:'1.5' }}>
+              <div style={{ fontFamily:F, fontSize:'14px', color:C.orange, fontWeight:700, letterSpacing:'0.5px', lineHeight:'1.5' }}>
                 Primer trimestre (3 meses) a €99/mes<br/>
                 <span style={{ color:C.textSec, fontWeight:400 }}>A partir del 4.° mes: €199/mes</span>
               </div>
             </div>
 
-            <div style={{ fontSize:'12px', color:C.textSec, lineHeight:'1.8', marginBottom:32, paddingBottom:32, borderBottom:`1px solid ${C.border2}` }}>
+            <div style={{ fontSize:'14px', color:C.textSec, lineHeight:'1.8', marginBottom:32, paddingBottom:32, borderBottom:`1px solid ${C.border2}` }}>
               <div style={{ marginBottom:8 }}>— Acceso completo a todas las funciones</div>
               <div style={{ marginBottom:8 }}>— Reportes en tiempo real</div>
               <div style={{ marginBottom:8 }}>— Gestion de staff ilimitada</div>
@@ -4339,11 +4369,11 @@ function Pricing() {
             <Btn
               onClick={() => handleCheckout(monthlyPrice, 'monthly')}
               disabled={!monthlyPrice || !!loading}
-              sx={{ width:'100%', justifyContent:'center', padding:'13px 28px', marginBottom:12, fontSize:'11px' }}
+              sx={{ width:'100%', justifyContent:'center', padding:'13px 28px', marginBottom:12, fontSize:'14px' }}
             >
               {loading === 'monthly' ? 'ABRIENDO STRIPE...' : 'PROBAR 14 DIAS GRATIS'}
             </Btn>
-            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, textAlign:'center', letterSpacing:'0.5px' }}>
+            <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, textAlign:'center', letterSpacing:'0.5px' }}>
               Se requiere tarjeta · Cancela cuando quieras · Se abre en nueva pestana
             </div>
           </Card>
@@ -4364,7 +4394,7 @@ function Pricing() {
                 <span style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.teal }}>€1.600</span>
                 <span style={{ fontFamily:F, fontSize:'13px', color:C.textSec }}>/ano</span>
               </div>
-              <div style={{ fontFamily:F, fontSize:'11px', color:C.teal, fontWeight:700, lineHeight:'1.5' }}>
+              <div style={{ fontFamily:F, fontSize:'14px', color:C.teal, fontWeight:700, lineHeight:'1.5' }}>
                 €133/mes · equivale a casi 4 meses gratis<br/>
                 <span style={{ display:'inline-block', marginTop:4, background:`${C.teal}22`, border:`1px solid ${C.teal}44`, padding:'1px 8px', borderRadius:2, letterSpacing:'1px' }}>
                   MEJOR PRECIO GARANTIZADO
@@ -4372,7 +4402,7 @@ function Pricing() {
               </div>
             </div>
 
-            <div style={{ fontSize:'12px', color:C.textSec, lineHeight:'1.8', marginBottom:32, paddingBottom:32, borderBottom:`1px solid ${C.border2}` }}>
+            <div style={{ fontSize:'14px', color:C.textSec, lineHeight:'1.8', marginBottom:32, paddingBottom:32, borderBottom:`1px solid ${C.border2}` }}>
               <div style={{ marginBottom:8 }}>— Todo lo del plan mensual</div>
               <div style={{ marginBottom:8 }}>— Acceso anticipado a nuevas funciones</div>
               <div style={{ marginBottom:8 }}>— Manager de onboarding dedicado</div>
@@ -4385,11 +4415,11 @@ function Pricing() {
               variant="teal"
               onClick={() => handleCheckout(annualPrice, 'annual')}
               disabled={!annualPrice || !!loading}
-              sx={{ width:'100%', justifyContent:'center', padding:'13px 28px', marginBottom:12, fontSize:'11px', boxShadow:`0 4px 20px ${C.teal}44` }}
+              sx={{ width:'100%', justifyContent:'center', padding:'13px 28px', marginBottom:12, fontSize:'14px', boxShadow:`0 4px 20px ${C.teal}44` }}
             >
               {loading === 'annual' ? 'ABRIENDO STRIPE...' : 'PROBAR 14 DIAS GRATIS'}
             </Btn>
-            <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, textAlign:'center', letterSpacing:'0.5px' }}>
+            <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, textAlign:'center', letterSpacing:'0.5px' }}>
               Se requiere tarjeta · Cancela cuando quieras · Se abre en nueva pestana
             </div>
           </Card>
@@ -4405,12 +4435,12 @@ function Pricing() {
               { label:'ACCESO INMEDIATO',  sub:'Activo al completar el pago' },
             ].map((t,i) => (
               <div key={i} style={{ textAlign:'center' }}>
-                <div style={{ fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'1px', marginBottom:3 }}>{t.label}</div>
-                <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec }}>{t.sub}</div>
+                <div style={{ fontFamily:F, fontSize:'14px', color:C.text, fontWeight:700, letterSpacing:'1px', marginBottom:3 }}>{t.label}</div>
+                <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec }}>{t.sub}</div>
               </div>
             ))}
           </div>
-          <div style={{ fontFamily:F, fontSize:'11px', color:C.textSec, letterSpacing:'1px' }}>
+          <div style={{ fontFamily:F, fontSize:'14px', color:C.textSec, letterSpacing:'1px' }}>
             Pagos gestionados por <span style={{ fontWeight:700, color:C.text }}>STRIPE</span> · Apple Pay · Google Pay · Tarjeta
           </div>
         </div>
@@ -4450,7 +4480,7 @@ function PaymentSuccess() {
           </div>
         </div>
 
-        <div style={{ fontFamily:F, fontSize:'11px', color:C.orange, letterSpacing:'4px', marginBottom:12, fontWeight:700 }}>VERIFICACIÓN COMPLETADA</div>
+        <div style={{ fontFamily:F, fontSize:'14px', color:C.orange, letterSpacing:'4px', marginBottom:12, fontWeight:700 }}>VERIFICACIÓN COMPLETADA</div>
         <div style={{ fontFamily:F, fontSize:'42px', fontWeight:700, color:C.text, marginBottom:20, letterSpacing:'-1px', textShadow:`0 2px 10px rgba(0,0,0,0.5)` }}>
           Bienvenido a la Élite
         </div>
@@ -4467,7 +4497,7 @@ function PaymentSuccess() {
           <div style={{ padding:'24px 32px' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
               <div>
-                <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>MEMBERSHIP STATUS</div>
+                <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>MEMBERSHIP STATUS</div>
                 <div style={{ fontFamily:F, fontSize:'18px', fontWeight:700, color:C.orange, letterSpacing:'1px' }}>BAROPS PRO ACCESSED</div>
               </div>
               <Badge label="ACTIVO" color={C.teal} bg={C.tealBg} />
@@ -4475,17 +4505,17 @@ function PaymentSuccess() {
             
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, borderTop:`1px solid ${C.border2}`, paddingTop:20 }}>
               <div>
-                <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>FASE ACTUAL</div>
+                <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>FASE ACTUAL</div>
                 <div style={{ fontFamily:F, fontSize:'13px', color:C.text, fontWeight:700 }}>14 DÍAS DE PRUEBA VIP</div>
               </div>
               <div>
-                <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>NIVEL DE ACCESO</div>
+                <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'2px', marginBottom:4 }}>NIVEL DE ACCESO</div>
                 <div style={{ fontFamily:F, fontSize:'13px', color:C.text, fontWeight:700 }}>ILIMITADO (TIER 1)</div>
               </div>
             </div>
             
             {sessionId && (
-              <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec, marginTop:20, paddingTop:16, borderTop:`1px solid ${C.border2}88`, letterSpacing:'1px', opacity:0.6 }}>
+              <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec, marginTop:20, paddingTop:16, borderTop:`1px solid ${C.border2}88`, letterSpacing:'1px', opacity:0.6 }}>
                 AUTH KEY: {sessionId.slice(0,24).toUpperCase()}...
               </div>
             )}
@@ -4494,7 +4524,7 @@ function PaymentSuccess() {
 
         <Btn
           variant="primary"
-          sx={{ padding:'16px 40px', fontSize:'12px', letterSpacing:'3px', boxShadow:`0 4px 15px ${C.orange}44`, borderRadius:3 }}
+          sx={{ padding:'16px 40px', fontSize:'14px', letterSpacing:'3px', boxShadow:`0 4px 15px ${C.orange}44`, borderRadius:3 }}
           onClick={() => { window.location.href = '/'; }}
         >
           INICIALIZAR SISTEMA
@@ -4624,7 +4654,7 @@ function Local({ localName, onLocalNameChange }) {
 
       <div style={{ marginBottom:isMobile?20:32 }}>
         <h1 style={{ fontFamily:F, fontSize:isMobile?'16px':'20px', fontWeight:700, letterSpacing:'5px', color:C.text, margin:0, marginBottom:8 }}>CONFIGURACIÓN LOCAL</h1>
-        <p style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', margin:0 }}>
+        <p style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'1.5px', margin:0 }}>
           Gestiona la información de tu establecimientos y preferencias del sistema
         </p>
       </div>
@@ -4641,7 +4671,7 @@ function Local({ localName, onLocalNameChange }) {
                   <Store size={32} color={C.textSec}/>
                 )}
               </div>
-              <label style={{ display:'inline-block', padding:'8px 16px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'10px', color:C.text, letterSpacing:'1px', fontWeight:700 }}>
+              <label style={{ display:'inline-block', padding:'8px 16px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'13px', color:C.text, letterSpacing:'1px', fontWeight:700 }}>
                 SUBIR FOTO
                 <input
                   type="file"
@@ -4663,7 +4693,7 @@ function Local({ localName, onLocalNameChange }) {
               </label>
             </div>
             <div>
-              <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>NOMBRE</label>
+              <label style={{ display:'block', fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>NOMBRE</label>
               <input
                 type="text"
                 value={formData.nombre}
@@ -4672,7 +4702,7 @@ function Local({ localName, onLocalNameChange }) {
               />
             </div>
             <div>
-              <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>DIRECCIÓN</label>
+              <label style={{ display:'block', fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>DIRECCIÓN</label>
               <input
                 type="text"
                 value={formData.direccion}
@@ -4681,7 +4711,7 @@ function Local({ localName, onLocalNameChange }) {
               />
             </div>
             <div>
-              <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CIUDAD</label>
+              <label style={{ display:'block', fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>CIUDAD</label>
               <input
                 type="text"
                 value={formData.ciudad}
@@ -4690,7 +4720,7 @@ function Local({ localName, onLocalNameChange }) {
               />
             </div>
             <div>
-              <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>AFORO</label>
+              <label style={{ display:'block', fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6 }}>AFORO</label>
               <input
                 type="number"
                 value={formData.aforo}
@@ -4701,7 +4731,7 @@ function Local({ localName, onLocalNameChange }) {
             <Btn
               onClick={handleSave}
               disabled={saving}
-              sx={{ width:'100%', marginTop:8, justifyContent:'center', padding:'10px', fontSize:'11px' }}
+              sx={{ width:'100%', marginTop:8, justifyContent:'center', padding:'10px', fontSize:'14px' }}
             >
               {saving ? 'GUARDANDO...' : 'GUARDAR CAMBIOS'}
             </Btn>
@@ -4713,15 +4743,15 @@ function Local({ localName, onLocalNameChange }) {
             <h2 style={{ fontFamily:F, fontSize:isMobile?'12px':'13px', color:C.text, letterSpacing:'2.5px', fontWeight:700, margin:'0 0 18px', marginBottom:isMobile?14:18 }}>PLAN ACTUAL</h2>
             <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
               <div>
-                <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 }}>PLAN</div>
+                <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 }}>PLAN</div>
                 <div style={{ fontFamily:F, fontSize:'16px', color:C.orange, fontWeight:700, letterSpacing:'2px' }}>PRO</div>
               </div>
               <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:12 }}>
-                <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 }}>ESTADO</div>
+                <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 }}>ESTADO</div>
                 <div style={{ fontFamily:F, fontSize:'13px', color:C.teal, fontWeight:700 }}>ACTIVO</div>
               </div>
               <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:12 }}>
-                <div style={{ fontFamily:F, fontSize:'10px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 }}>INICIO</div>
+                <div style={{ fontFamily:F, fontSize:'13px', color:C.textSec, letterSpacing:'1.5px', marginBottom:4 }}>INICIO</div>
                 <div style={{ fontFamily:F, fontSize:'13px', color:C.text }}>29 de abril, 2026</div>
               </div>
             </div>
@@ -4736,7 +4766,7 @@ function Local({ localName, onLocalNameChange }) {
                 { key:'compactMode', label:'Modo compacto de inventario' }
               ].map(({ key, label }) => (
                 <div key={key} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', paddingBottom:12, borderBottom:`1px solid ${C.border2}` }}>
-                  <span style={{ fontFamily:F, fontSize:'12px', color:C.text }}>{label}</span>
+                  <span style={{ fontFamily:F, fontSize:'14px', color:C.text }}>{label}</span>
                   <button
                     onClick={() => togglePref(key)}
                     style={{
@@ -4763,6 +4793,238 @@ function Local({ localName, onLocalNameChange }) {
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 
 // ─── DRAWER: LOCAL SETTINGS ───────────────────────────────────────────────────
+
+function CartDrawer({ isOpen, onClose }) {
+  const { cartItems, setCartItems, localName, customInv, userRole, savePedido } = useApp() || {};
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  if (!isOpen) return null;
+
+  const getProvGroup = (item) => {
+    const cat = item.categoria || '';
+    const l = cat.toLowerCase();
+    if (['ginebra','vodka','ron','whisky','tequila','mezcal','brandy','cognac','destilado','licor','vermut','amaro','bitter','aperitivo','espumoso','vino','cava','champagne','cerveza'].some(w=>l.includes(w))) return 'Proveedor de Bebidas y Destilados';
+    if (['fruta','fresco','fresca','zumo','jugo','citrico','hierba','flor','vegetal', 'limones'].some(w=>l.includes(w))) return 'Proveedor de Frutas y Frescos';
+    if (['seco','fruto seco','deshidratado','especia','semilla','polvo'].some(w=>l.includes(w))) return 'Proveedor de Secos y Especias';
+    if (['texturizante','gelificante','emulsionante','agar','lecitina','xantana'].some(w=>l.includes(w))) return 'Proveedor de Texturizantes';
+    if (['mixer','tonica','soda','ginger','agua','refresco','sirope','jarabe','azucar'].some(w=>l.includes(w))) return 'Proveedor de Mixers y Refrescos';
+    return item.proveedor || 'Proveedor General / Otros';
+  };
+
+  const grouped = (cartItems || []).reduce((acc, item) => {
+    const prov = getProvGroup(item);
+    if (!acc[prov]) acc[prov] = [];
+    acc[prov].push(item);
+    return acc;
+  }, {});
+
+  const handleRemove = (id) => setCartItems(prev => prev.filter(i => i.id !== id));
+  const handleUpdateQty = (id, delta) => {
+    setCartItems(prev => prev.map(i => {
+      if (i.id === id) {
+        const newQty = (i.qty || 1) + delta;
+        return newQty <= 0 ? null : { ...i, qty: newQty };
+      }
+      return i;
+    }).filter(Boolean));
+  };
+  
+  const handleManualAdd = (item) => {
+    setCartItems(prev => {
+      const ex = prev.find(i => i.id === item.id);
+      if (ex) return prev.map(i => i.id === item.id ? { ...i, qty: i.qty + 1 } : i);
+      return [...prev, { ...item, qty: 1 }];
+    });
+    setSearchQuery('');
+  };
+
+  const searchResults = searchQuery.trim() ? (customInv || []).filter(i => i && i.nombre && i.nombre.toLowerCase().includes(searchQuery.toLowerCase())).slice(0, 5) : [];
+  
+  const pedidoId = () => 'PED-' + Date.now().toString(36).toUpperCase();
+
+  const handleSavePedido = async (prov, canal) => {
+    if (savePedido) {
+      await savePedido({
+        proveedor: prov,
+        items: grouped[prov],
+        canal: canal,
+      });
+    }
+  };
+
+  const handleConfirmarTodo = async () => {
+    for (const prov of Object.keys(grouped)) {
+      await handleSavePedido(prov, 'manual');
+    }
+    setCartItems([]);
+    onClose();
+  };
+
+  const handlePrint = async (prov) => {
+    await handleSavePedido(prov, 'pdf');
+    const pid = pedidoId();
+    const fecha = new Date().toLocaleDateString('es-ES', { day:'2-digit', month:'long', year:'numeric' });
+    const hora = new Date().toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' });
+    const w = window.open('', '_blank');
+    w.document.write(`
+      <html>
+        <head>
+          <title>Pedido ${pid} - ${prov}</title>
+          <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Inter', sans-serif; color: #1a1a1a; }
+            .header { background: #0a0a0a; color: #fff; padding: 32px 40px; display: flex; justify-content: space-between; align-items: center; }
+            .header-left h1 { font-size: 22px; font-weight: 900; letter-spacing: 4px; color: #FF6B35; }
+            .header-left p { font-size: 11px; color: #888; letter-spacing: 2px; margin-top: 4px; }
+            .header-right { text-align: right; font-size: 12px; color: #aaa; }
+            .header-right .pid { font-size: 14px; color: #FF6B35; font-weight: 700; letter-spacing: 1px; }
+            .meta { padding: 24px 40px; background: #f8f8f8; border-bottom: 2px solid #eee; display: flex; justify-content: space-between; }
+            .meta-item { font-size: 12px; color: #555; }
+            .meta-item strong { display: block; font-size: 16px; color: #1a1a1a; margin-top: 4px; }
+            .content { padding: 32px 40px; }
+            .content h2 { font-size: 13px; letter-spacing: 3px; color: #888; margin-bottom: 16px; font-weight: 700; }
+            table { width: 100%; border-collapse: collapse; }
+            thead th { background: #0a0a0a; color: #FF6B35; padding: 12px 14px; font-size: 11px; letter-spacing: 2px; font-weight: 700; text-align: left; }
+            tbody td { padding: 14px; border-bottom: 1px solid #eee; font-size: 14px; }
+            tbody tr:hover { background: #fafafa; }
+            .num { color: #FF6B35; font-weight: 700; width: 40px; }
+            .qty { font-weight: 700; color: #0a0a0a; }
+            .unit { color: #888; font-size: 12px; }
+            .footer { margin-top: 48px; padding: 24px 40px; border-top: 2px solid #eee; display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #aaa; }
+            .footer .brand { display: flex; align-items: center; gap: 8px; }
+            .footer .brand span { color: #FF6B35; font-weight: 900; letter-spacing: 3px; font-size: 13px; }
+            @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div class="header-left">
+              <h1>BAROPS</h1>
+              <p>SISTEMA OPERATIVO DEL BAR</p>
+            </div>
+            <div class="header-right">
+              <div class="pid">${pid}</div>
+              <div>${fecha} · ${hora}</div>
+            </div>
+          </div>
+          <div class="meta">
+            <div class="meta-item">ESTABLECIMIENTO<strong>${localName}</strong></div>
+            <div class="meta-item">PROVEEDOR<strong>${prov}</strong></div>
+            <div class="meta-item">PRODUCTOS<strong>${grouped[prov].length} líneas</strong></div>
+          </div>
+          <div class="content">
+            <h2>DETALLE DEL PEDIDO</h2>
+            <table>
+              <thead><tr><th class="num">#</th><th>PRODUCTO</th><th>CATEGORÍA</th><th>CANTIDAD</th></tr></thead>
+              <tbody>
+                ${grouped[prov].map((item, idx) => `
+                  <tr>
+                    <td class="num">${idx + 1}</td>
+                    <td>${item.nombre}</td>
+                    <td>${item.categoria || '-'}</td>
+                    <td><span class="qty">${item.qty}</span> <span class="unit">${item.unidad}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div class="footer">
+            <div class="brand"><span>BAROPS</span> · Generado automáticamente</div>
+            <div>${pid} · ${fecha}</div>
+          </div>
+        </body>
+      </html>
+    `);
+    w.document.close();
+    setTimeout(() => { w.print(); }, 500);
+  };
+
+  const handleWhatsapp = async (prov) => {
+    await handleSavePedido(prov, 'whatsapp');
+    const items = grouped[prov];
+    const tel = items[0]?.telefono_proveedor;
+    let msg = `Hola, necesitamos el siguiente pedido para ${localName}:\n\n`;
+    items.forEach(i => msg += `- ${i.nombre}: ${i.qty} ${i.unidad}\n`);
+    msg = encodeURIComponent(msg);
+    if (tel) window.open(`https://wa.me/${tel.replace(/\s+/g,'')}?text=${msg}`, '_blank');
+    else { navigator.clipboard?.writeText(decodeURIComponent(msg)); alert('Copiado al portapapeles'); }
+  };
+
+  return (
+    <div style={{ position:'fixed', top:0, left:0, width:'100vw', height:'100vh', zIndex:9999, display:'flex', justifyContent:'flex-end' }}>
+      <div style={{ position:'absolute', top:0, left:0, width:'100%', height:'100%', background:'rgba(0,0,0,0.6)', backdropFilter:'blur(2px)' }} onClick={onClose} />
+      <div style={{ position:'relative', width:'100%', maxWidth:400, height:'100%', background:C.bg, borderLeft:`1px solid ${C.border}`, display:'flex', flexDirection:'column', animation:'slideInRight 0.3s forwards' }}>
+        <div style={{ padding:20, borderBottom:`1px solid ${C.border2}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <h2 style={{ margin:0, fontSize:16, letterSpacing:2, color:C.text }}>🛒 CARRITO DE PEDIDOS</h2>
+          <button onClick={onClose} style={{ background:'transparent', border:'none', color:C.textSec, cursor:'pointer' }}><X size={20}/></button>
+        </div>
+        <div style={{ flex:1, minHeight: 0, overflowY:'auto', padding:20 }}>
+          {Object.keys(grouped).length === 0 ? (
+            <div style={{ color:C.textSec, fontSize:14, textAlign:'center', marginTop:40 }}>El carrito está vacío</div>
+          ) : (
+            Object.entries(grouped).map(([prov, items]) => (
+              <div key={prov} style={{ marginBottom: 30, background: C.cardAlt, padding: 16, borderRadius: 8, border: `1px solid ${C.border2}` }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.orange, marginBottom: 12 }}>{prov}</div>
+                {items.map(item => (
+                  <div key={item.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:`1px solid ${C.border}` }}>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:'13px', color:C.text }}>{item.nombre}</div>
+                    </div>
+                    <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                      <div style={{ display:'flex', alignItems:'center', background:C.bg, borderRadius:16, border:`1px solid ${C.border2}`, padding:'2px' }}>
+                        <button onClick={()=>handleUpdateQty(item.id, -1)} style={{ background:'none', border:'none', color:C.textSec, cursor:'pointer', width:24, height:24, display:'flex', alignItems:'center', justifyContent:'center' }}>-</button>
+                        <span style={{ fontSize:'13px', color:C.teal, fontWeight:700, minWidth:20, textAlign:'center' }}>{item.qty}</span>
+                        <button onClick={()=>handleUpdateQty(item.id, 1)} style={{ background:'none', border:'none', color:C.textSec, cursor:'pointer', width:24, height:24, display:'flex', alignItems:'center', justifyContent:'center' }}>+</button>
+                      </div>
+                      <span style={{ fontSize:'12px', color:C.textSec, width:40 }}>{item.unidad}</span>
+                      <button onClick={()=>handleRemove(item.id)} style={{ background:'none', border:'none', color:C.red, cursor:'pointer', padding:4 }}>
+                        <Trash2 size={14}/>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {userRole === 'manager' && (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+                    <button onClick={() => handleWhatsapp(prov)} style={{ flex: 1, padding: '8px', background: C.teal, color: '#000', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>WHATSAPP</button>
+                    <button onClick={() => handlePrint(prov)} style={{ flex: 1, padding: '8px', background: C.card, border: `1px solid ${C.border2}`, color: C.text, borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>PDF / IMPRIMIR</button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+          {userRole === 'manager' && Object.keys(grouped).length > 0 && (
+            <div style={{ padding: '0 20px 16px' }}>
+              <button onClick={handleConfirmarTodo} style={{ width: '100%', padding: '12px', background: 'linear-gradient(135deg, #FF6B35, #E85A25)', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 800, letterSpacing: '2px', color: '#000', boxShadow: '0 4px 12px rgba(255,107,53,0.3)' }}>CONFIRMAR Y GUARDAR PEDIDO</button>
+            </div>
+          )}
+        </div>
+        <div style={{ flexShrink: 0, padding: '0 20px 20px', borderTop: `1px solid ${C.border2}`, paddingTop: 20 }}>
+          <div style={{ fontSize: 13, color: C.textSec, marginBottom: 8, letterSpacing: '1px', fontWeight: 700 }}>AÑADIR PRODUCTO EXTRA</div>
+          <div style={{ position: 'relative' }}>
+            <input 
+              value={searchQuery} 
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Buscar en tu inventario..." 
+              style={{ width: '100%', padding: '10px 12px', background: C.cardAlt, border: `1px solid ${C.border2}`, borderRadius: 4, color: C.text, outline: 'none', boxSizing: 'border-box', fontFamily: F, fontSize: 13 }}
+            />
+            {searchResults.length > 0 && (
+              <div style={{ position: 'absolute', bottom: '100%', left: 0, width: '100%', background: C.card, border: `1px solid ${C.border2}`, borderRadius: 4, zIndex: 10, maxHeight: 150, overflowY: 'auto', marginBottom: 4, boxShadow: '0 -4px 12px rgba(0,0,0,0.2)' }}>
+                {searchResults.map(res => (
+                  <div key={res.id} onClick={() => handleManualAdd(res)} style={{ padding: '10px 12px', borderBottom: `1px solid ${C.border2}`, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ color: C.text, fontSize: 13 }}>{res.nombre}</div>
+                    <button style={{ background: 'transparent', border: 'none', color: C.teal, cursor: 'pointer', display: 'flex' }}><Plus size={16}/></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LocalDrawer({ isOpen, onClose, localName, onLocalNameChange }) {
   const [tab, setTab] = useState('perfil');
   const [loading, setLoading] = useState(true);
@@ -5038,7 +5300,7 @@ function LocalDrawer({ isOpen, onClose, localName, onLocalNameChange }) {
             <button key={t} onClick={() => setTab(t)} style={{
               flex:1, padding:'14px 12px', background:'none', border:'none', cursor:'pointer',
               borderBottom:`2px solid ${tab === t ? C.orange : 'transparent'}`,
-              fontFamily:F, fontSize:'10px', color:tab === t ? C.orange : C.textSec, letterSpacing:'2px', fontWeight:tab === t ? 700 : 400,
+              fontFamily:F, fontSize:'13px', color:tab === t ? C.orange : C.textSec, letterSpacing:'2px', fontWeight:tab === t ? 700 : 400,
               transition:'all 0.2s', textTransform:'uppercase'
             }}>
               {t === 'perfil' ? 'PERFIL' : t === 'equipo' ? 'EQUIPO' : 'DATOS'}
@@ -5055,14 +5317,14 @@ function LocalDrawer({ isOpen, onClose, localName, onLocalNameChange }) {
                 <div style={{ width:100, height:100, margin:'0 auto 12px', borderRadius:8, background:C.cardAlt, border:`2px dashed ${C.border2}`, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
                   {logoPreview ? <img src={logoPreview} style={{ width:'100%', height:'100%', objectFit:'cover' }}/> : <Store size={40} color={C.textSec}/>}
                 </div>
-                <label style={{ display:'inline-block', padding:'8px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'10px', color:C.text, letterSpacing:'1px', fontWeight:700 }}>
+                <label style={{ display:'inline-block', padding:'8px 14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'13px', color:C.text, letterSpacing:'1px', fontWeight:700 }}>
                   SUBIR LOGO
                   <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && handleLogoUpload(e.target.files[0])} style={{ display:'none' }}/>
                 </label>
               </div>
               {['nombre', 'tipo', 'direccion', 'ciudad', 'telefono', 'email', 'aforo'].map(field => (
                 <div key={field}>
-                  <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>{field}</label>
+                  <label style={{ display:'block', fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>{field}</label>
                   {field === 'tipo' ? (
                     <select value={perfil[field]} onChange={(e) => setPerfil(p => ({...p, [field]:e.target.value}))} 
                       style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text }}>
@@ -5074,61 +5336,61 @@ function LocalDrawer({ isOpen, onClose, localName, onLocalNameChange }) {
                 </div>
               ))}
               <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14, marginTop:8 }}>
-                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.orange, letterSpacing:'2px', fontWeight:700, marginBottom:12 }}>CONFIGURACIÓN OPERATIVA</h3>
+                <h3 style={{ fontFamily:F, fontSize:'13px', color:C.orange, letterSpacing:'2px', fontWeight:700, marginBottom:12 }}>CONFIGURACIÓN OPERATIVA</h3>
                 {['umbral_dias', 'proveedor', 'telefono_proveedor'].map(field => (
                   <div key={field} style={{ marginBottom:10 }}>
-                    <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>{field === 'umbral_dias' ? 'Umbral Stock Crítico (días)' : field === 'proveedor' ? 'Proveedor Principal' : 'Teléfono Proveedor'}</label>
+                    <label style={{ display:'block', fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>{field === 'umbral_dias' ? 'Umbral Stock Crítico (días)' : field === 'proveedor' ? 'Proveedor Principal' : 'Teléfono Proveedor'}</label>
                     <input type={field === 'umbral_dias' ? 'number' : 'text'} value={operativo[field]} onChange={(e) => setOperativo(p => ({...p, [field]:e.target.value}))} style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}/>
                   </div>
                 ))}
               </div>
-              <button onClick={handleSavePerfil} disabled={saving} style={{ width:'100%', padding:'12px', background:C.orange, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:'#000', fontWeight:700, letterSpacing:'2px', transition:'opacity 0.2s', opacity:saving ? 0.6 : 1 }}>GUARDAR CAMBIOS</button>
+              <button onClick={handleSavePerfil} disabled={saving} style={{ width:'100%', padding:'12px', background:C.orange, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'14px', color:'#000', fontWeight:700, letterSpacing:'2px', transition:'opacity 0.2s', opacity:saving ? 0.6 : 1 }}>GUARDAR CAMBIOS</button>
             </div>
           ) : tab === 'equipo' ? (
             <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
               <div>
-                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.teal, letterSpacing:'2px', fontWeight:700, marginBottom:12 }}>EQUIPO DE ACCESO</h3>
+                <h3 style={{ fontFamily:F, fontSize:'13px', color:C.teal, letterSpacing:'2px', fontWeight:700, marginBottom:12 }}>EQUIPO DE ACCESO</h3>
                 {users.map(u => (
                   <div key={u.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px', background:C.cardAlt, borderRadius:4, marginBottom:8 }}>
-                    <div style={{ width:36, height:36, borderRadius:'50%', background:C.orange, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F, fontSize:'11px', fontWeight:700, color:'#000', flexShrink:0 }}>{u.avatar}</div>
+                    <div style={{ width:36, height:36, borderRadius:'50%', background:C.orange, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:F, fontSize:'14px', fontWeight:700, color:'#000', flexShrink:0 }}>{u.avatar}</div>
                     <div style={{ flex:1 }}>
-                      <div style={{ fontFamily:F, fontSize:'11px', color:C.text }}>{u.email}</div>
-                      <div style={{ fontFamily:F, fontSize:'9px', color:C.textSec }}>{u.rol}</div>
+                      <div style={{ fontFamily:F, fontSize:'14px', color:C.text }}>{u.email}</div>
+                      <div style={{ fontFamily:F, fontSize:'12px', color:C.textSec }}>{u.rol}</div>
                     </div>
                   </div>
                 ))}
               </div>
               <div>
-                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.purple, letterSpacing:'2px', fontWeight:700, marginBottom:10 }}>INVITAR USUARIO</h3>
+                <h3 style={{ fontFamily:F, fontSize:'13px', color:C.purple, letterSpacing:'2px', fontWeight:700, marginBottom:10 }}>INVITAR USUARIO</h3>
                 <div style={{ display:'flex', gap:8 }}>
-                  <input type="email" placeholder="email@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} style={{ flex:1, padding:'10px 12px', fontFamily:F, fontSize:'12px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}/>
-                  <button onClick={handleInviteUser} style={{ padding:'10px 14px', background:C.purple, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:'#fff', fontWeight:700 }}>ENVIAR</button>
+                  <input type="email" placeholder="email@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} style={{ flex:1, padding:'10px 12px', fontFamily:F, fontSize:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text, outline:'none' }}/>
+                  <button onClick={handleInviteUser} style={{ padding:'10px 14px', background:C.purple, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'14px', color:'#fff', fontWeight:700 }}>ENVIAR</button>
                 </div>
               </div>
               <div style={{ borderTop:`1px solid ${C.border2}`, paddingTop:14 }}>
-                <h3 style={{ fontFamily:F, fontSize:'10px', color:C.amber, letterSpacing:'2px', fontWeight:700, marginBottom:14 }}>PREFERENCIAS</h3>
+                <h3 style={{ fontFamily:F, fontSize:'13px', color:C.amber, letterSpacing:'2px', fontWeight:700, marginBottom:14 }}>PREFERENCIAS</h3>
                 {[{key:'stock_alerts', label:'Alertas de stock crítico'}, {key:'shift_alerts', label:'Alertas de turnos'}, {key:'weekly_report', label:'Informe semanal'}, {key:'compact_mode', label:'Modo compacto'}].map(item => (
                   <div key={item.key} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 0', borderBottom:`1px solid ${C.border2}` }}>
-                    <span style={{ fontFamily:F, fontSize:'11px', color:C.text }}>{item.label}</span>
+                    <span style={{ fontFamily:F, fontSize:'14px', color:C.text }}>{item.label}</span>
                     <button onClick={() => setPrefs(p => ({...p, [item.key]:!p[item.key]}))} style={{ width:44, height:24, borderRadius:12, background:prefs[item.key] ? C.orange : '#333', border:'none', cursor:'pointer', transition:'all 0.2s', position:'relative' }}>
                       <div style={{ position:'absolute', width:20, height:20, borderRadius:'50%', background:'#fff', top:2, left:prefs[item.key] ? 22 : 2, transition:'left 0.2s' }}/>
                     </button>
                   </div>
                 ))}
                 <div style={{ marginTop:14 }}>
-                  <label style={{ display:'block', fontFamily:F, fontSize:'9px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>Día del Informe Semanal</label>
+                  <label style={{ display:'block', fontFamily:F, fontSize:'12px', color:C.textSec, letterSpacing:'1.5px', marginBottom:6, textTransform:'uppercase' }}>Día del Informe Semanal</label>
                   <select value={prefs.weekly_day} onChange={(e) => setPrefs(p => ({...p, weekly_day:e.target.value}))} style={{ width:'100%', padding:'10px 12px', fontFamily:F, fontSize:'13px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, color:C.text }}>
                     {['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(d => <option key={d} value={d}>{d}</option>)}
                   </select>
                 </div>
               </div>
-              <button onClick={handleSavePrefs} disabled={saving} style={{ width:'100%', padding:'12px', background:C.orange, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:'#000', fontWeight:700, letterSpacing:'2px', transition:'opacity 0.2s', opacity:saving ? 0.6 : 1, marginTop:12 }}>GUARDAR PREFERENCIAS</button>
+              <button onClick={handleSavePrefs} disabled={saving} style={{ width:'100%', padding:'12px', background:C.orange, border:'none', borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'14px', color:'#000', fontWeight:700, letterSpacing:'2px', transition:'opacity 0.2s', opacity:saving ? 0.6 : 1, marginTop:12 }}>GUARDAR PREFERENCIAS</button>
             </div>
           ) : (
             <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-              <button onClick={handleExportInventario} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s', hover:{background:C.orange} }}>📊 EXPORTAR INVENTARIO CSV</button>
-              <button onClick={handleExportMovimientos} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s' }}>📈 EXPORTAR MOVIMIENTOS CSV</button>
-              <button onClick={handleExportMerma} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'11px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s' }}>📉 EXPORTAR INFORME MERMA CSV</button>
+              <button onClick={handleExportInventario} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'14px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s', hover:{background:C.orange} }}>📊 EXPORTAR INVENTARIO CSV</button>
+              <button onClick={handleExportMovimientos} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'14px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s' }}>📈 EXPORTAR MOVIMIENTOS CSV</button>
+              <button onClick={handleExportMerma} style={{ width:'100%', padding:'14px', background:C.cardAlt, border:`1px solid ${C.border2}`, borderRadius:4, cursor:'pointer', fontFamily:F, fontSize:'14px', color:C.text, fontWeight:700, letterSpacing:'2px', transition:'all 0.2s' }}>📉 EXPORTAR INFORME MERMA CSV</button>
             </div>
           )}
         </div>
@@ -5139,7 +5401,8 @@ function LocalDrawer({ isOpen, onClose, localName, onLocalNameChange }) {
 
 // ─── COMPONENTES MÓVIL ────────────────────────────────────────────────────────
 
-function MobileTopBar({ screen, onMenuOpen, localName }) {
+function MobileTopBar({ screen, localName }) {
+  const { cartItems, setShowCartDrawer } = useApp() || {};
   const screenLabels = {
     dashboard: 'DASHBOARD', inventario: 'INVENTARIO', staffing: 'STAFFING',
     agente: 'AGENTE IA', analytics: 'ANALYTICS', carta: 'CARTA',
@@ -5157,19 +5420,17 @@ function MobileTopBar({ screen, onMenuOpen, localName }) {
       boxSizing: 'border-box',
       zIndex: 100, fontFamily: F
     }}>
-      <button onClick={onMenuOpen} style={{
-        background: 'none', border: 'none', cursor: 'pointer', padding: '8px 4px',
-        display: 'flex', alignItems: 'center', justifyContent: 'center'
-      }}>
-        <div style={{ width: 24, height: 20, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ width: '100%', height: 2, background: C.text, borderRadius: 1 }} />
-          <div style={{ width: '100%', height: 2, background: C.text, borderRadius: 1 }} />
-          <div style={{ width: '100%', height: 2, background: C.text, borderRadius: 1 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          width: '28px', height: '28px', borderRadius: '50%', overflow: 'hidden',
+          background: '#050505', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          border: '1px solid rgba(255, 107, 53, 0.3)'
+        }}>
+          <img src="/logo.png" style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="Logo" />
         </div>
-      </button>
-
-      <div style={{ fontSize: 11, letterSpacing: 2, color: C.text, fontWeight: 700 }}>
-        {screenLabels[screen] || 'BAROPS'}
+        <div style={{ fontSize: 11, letterSpacing: 2, color: C.text, fontWeight: 700 }}>
+          {screenLabels[screen] || 'BAROPS'}
+        </div>
       </div>
 
       <Bell size={20} color={C.textSec} style={{ cursor: 'pointer' }} />
@@ -5215,10 +5476,11 @@ function MobileBottomNav({ active, setActive, onMoreOpen }) {
   );
 }
 
-function MobileDrawer({ isOpen, onClose, active, setActive, localName, onOpenLocalSettings }) {
+function MobileDrawer({ isOpen, onClose, active, setActive, localName, onOpenLocalSettings, onLogout }) {
   const NAV = [
     { id: 'dashboard', Icon: LayoutDashboard, label: 'DASHBOARD' },
     { id: 'inventario', Icon: Package, label: 'INVENTARIO' },
+    { id: 'historial', Icon: ClipboardList, label: 'PEDIDOS' },
     { id: 'staffing', Icon: Users, label: 'STAFFING' },
     { id: 'agente', Icon: Bot, label: 'AGENTE IA' },
     { id: 'analytics', Icon: BarChart2, label: 'ANALYTICS' },
@@ -5246,8 +5508,11 @@ function MobileDrawer({ isOpen, onClose, active, setActive, localName, onOpenLoc
         paddingTop: `env(safe-area-inset-top)`
       }}>
         <div style={{ padding: '20px 22px', borderBottom: `1px solid ${C.border2}` }}>
-          <div style={{ fontSize: 24, fontWeight: 700, color: C.orange, letterSpacing: 7 }}>BAROPS</div>
-          <div style={{ fontSize: 9, color: C.textSec, letterSpacing: 3, marginTop: 5 }}>MÓVIL</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <img src="/logo.png" style={{ height: '24px', width: 'auto', objectFit: 'contain' }} alt="Logo" />
+            <div style={{ fontSize: 24, fontWeight: 700, color: C.orange, letterSpacing: 7 }}>BAROPS</div>
+          </div>
+          <div style={{ fontSize: 9, color: C.textSec, letterSpacing: 3, marginTop: 8 }}>MÓVIL</div>
         </div>
 
         <nav style={{ flex: 1, padding: '10px 0', overflowY: 'auto' }}>
@@ -5278,10 +5543,20 @@ function MobileDrawer({ isOpen, onClose, active, setActive, localName, onOpenLoc
               width: '100%', padding: '10px 14px', background: C.cardAlt,
               border: `1px solid ${C.border2}`, borderRadius: 4, cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: 10, fontSize: 11,
-              fontFamily: F, color: C.orange, fontWeight: 700
+              fontFamily: F, color: C.orange, fontWeight: 700, marginBottom: 12
             }}>
             <Store size={14} color={C.orange} />
             CONFIGURACIÓN
+          </button>
+          <button onClick={() => { onLogout?.(); onClose(); }}
+            style={{
+              width: '100%', padding: '10px 14px', background: `${C.red}15`,
+              border: `1px solid ${C.red}44`, borderRadius: 4, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 10, fontSize: 11,
+              fontFamily: F, color: C.red, fontWeight: 700
+            }}>
+            <LogOut size={14} color={C.red} />
+            CERRAR SESIÓN
           </button>
         </div>
       </div>
@@ -5293,12 +5568,13 @@ function MobileDrawer({ isOpen, onClose, active, setActive, localName, onOpenLoc
   );
 }
 
-function MoreBottomSheet({ isOpen, onClose, setScreen }) {
+function MoreBottomSheet({ isOpen, onClose, setScreen, onOpenLocalSettings, onLogout }) {
   const moreItems = [
-    { id: 'staffing', Icon: Users, label: 'STAFFING', color: C.teal },
-    { id: 'analytics', Icon: BarChart2, label: 'ANALYTICS', color: C.purple },
-    { id: 'pricing', Icon: CreditCard, label: 'BILLING', color: C.amber },
-    { id: 'local', Icon: Store, label: 'CONFIGURACIÓN', color: C.orange },
+    { id: 'staffing', Icon: Users, label: 'STAFFING', color: C.teal, action: () => { setScreen('staffing'); onClose(); } },
+    { id: 'analytics', Icon: BarChart2, label: 'ANALYTICS', color: C.purple, action: () => { setScreen('analytics'); onClose(); } },
+    { id: 'pricing', Icon: CreditCard, label: 'BILLING', color: C.amber, action: () => { setScreen('pricing'); onClose(); } },
+    { id: 'local', Icon: Store, label: 'CONFIGURACIÓN', color: C.orange, action: () => { onOpenLocalSettings?.(); onClose(); } },
+    { id: 'logout', Icon: LogOut, label: 'CERRAR SESIÓN', color: C.red, action: () => { onLogout?.(); onClose(); } }
   ];
 
   if (!isOpen) return null;
@@ -5326,8 +5602,8 @@ function MoreBottomSheet({ isOpen, onClose, setScreen }) {
         }} />
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          {moreItems.map(({ id, Icon, label, color }) => (
-            <button key={id} onClick={() => { setScreen(id); onClose(); }}
+          {moreItems.map(({ id, Icon, label, color, action }) => (
+            <button key={id} onClick={action}
               style={{
                 padding: '16px 12px', background: `${color}15`, border: `1px solid ${color}33`,
                 borderRadius: 8, cursor: 'pointer', display: 'flex', flexDirection: 'column',
@@ -5352,305 +5628,265 @@ function LoginPage({ onLogin }) {
   const canvasRef = useRef(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [role, setRole] = useState('manager');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [focusedInput, setFocusedInput] = useState(null);
+  const [mode, setMode] = useState('login'); // 'login' | 'signup'
+  const [authError, setAuthError] = useState(null);
+  const [successMsg, setSuccessMsg] = useState(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const ctx = canvas.getContext('2d', { alpha: false });
 
-    const ctx = canvas.getContext('2d');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    let width, height;
+    const setSize = () => {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.scale(dpr, dpr);
+    };
+    setSize();
+    window.addEventListener('resize', setSize);
 
-    const particles = Array.from({ length: 100 }, () => ({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height,
-      vx: (Math.random() - 0.5) * 0.5,
-      vy: (Math.random() - 0.5) * 0.5,
-      color: Math.random() > 0.5 ? '#FF6B35' : '#8B1A1A',
-      r: Math.random() * 2.5 + 1,
+    const NUM_PARTICLES = window.innerWidth < 768 ? 80 : 160;
+    const particles = Array.from({ length: NUM_PARTICLES }, () => ({
+      x: Math.random() * width, y: Math.random() * height, z: Math.random() * 2000,
+      vx: (Math.random() - 0.5) * 1.2, vy: (Math.random() - 0.5) * 1.2, vz: (Math.random() - 0.5) * 3,
+      size: Math.random() * 1.5 + 0.5, color: Math.random() > 0.3 ? '#FF6B35' : '#8B1A1A'
     }));
-
-    const lines = Array.from({ length: 8 }, () => ({
-      x: Math.random() * canvas.width,
-      y: Math.random() * canvas.height,
-      angle: Math.random() * Math.PI * 2,
-      speed: Math.random() * 0.3 + 0.1,
+    const rays = Array.from({ length: 8 }, () => ({
+      x: Math.random() * width, y: Math.random() * height,
+      angle: Math.random() * Math.PI * 2, length: Math.random() * 300 + 100,
+      speed: Math.random() * 4 + 2, opacity: 0, fadeDir: 0.005 + Math.random() * 0.01
     }));
 
     let raf;
-    let frameCount = 0;
     const animate = () => {
-      ctx.fillStyle = '#0A0A0A';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      frameCount++;
+      ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, width, height);
+      rays.forEach(ray => {
+        ray.x += Math.cos(ray.angle) * ray.speed; ray.y += Math.sin(ray.angle) * ray.speed;
+        ray.opacity += ray.fadeDir;
+        if (ray.opacity >= 0.5) ray.fadeDir *= -1;
+        if (ray.opacity <= 0) { ray.x = Math.random() * width; ray.y = Math.random() * height; ray.angle = Math.random() * Math.PI * 2; ray.opacity = 0; ray.fadeDir = 0.005 + Math.random() * 0.01; }
+        const grad = ctx.createLinearGradient(ray.x, ray.y, ray.x - Math.cos(ray.angle) * ray.length, ray.y - Math.sin(ray.angle) * ray.length);
+        grad.addColorStop(0, `rgba(255, 107, 53, ${Math.max(0, ray.opacity)})`); grad.addColorStop(1, 'rgba(255, 107, 53, 0)');
+        ctx.beginPath(); ctx.moveTo(ray.x, ray.y); ctx.lineTo(ray.x - Math.cos(ray.angle) * ray.length, ray.y - Math.sin(ray.angle) * ray.length);
+        ctx.strokeStyle = grad; ctx.lineWidth = 1; ctx.stroke();
+      });
       particles.forEach(p => {
-        p.x += p.vx;
-        p.y += p.vy;
-        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
-        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
-
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = p.color + 'CC';
-        ctx.fill();
+        p.x += p.vx; p.y += p.vy; p.z += p.vz;
+        if (p.z < 1) p.z = 2000; if (p.z > 2000) p.z = 1;
+        if (p.x < 0) p.x = width; if (p.x > width) p.x = 0; if (p.y < 0) p.y = height; if (p.y > height) p.y = 0;
+        const scale = 500 / p.z;
+        const x2d = (p.x - width/2) * scale + width/2; const y2d = (p.y - height/2) * scale + height/2;
+        const r2d = Math.max(0.1, p.size * scale); const alpha = Math.max(0, 1 - (p.z / 2000));
+        ctx.beginPath(); ctx.arc(x2d, y2d, r2d, 0, Math.PI * 2); ctx.fillStyle = p.color;
+        ctx.globalAlpha = alpha; ctx.shadowBlur = 12 * scale; ctx.shadowColor = p.color; ctx.fill();
       });
-
-      lines.forEach(line => {
-        line.angle += 0.001;
-        const length = 200;
-        const x2 = line.x + Math.cos(line.angle) * length;
-        const y2 = line.y + Math.sin(line.angle) * length;
-        ctx.beginPath();
-        ctx.moveTo(line.x, line.y);
-        ctx.lineTo(x2, y2);
-        ctx.strokeStyle = frameCount % 3 === 0 ? '#FF6B3533' : '#8B1A1A33';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      });
-
-      particles.forEach((a, i) => {
-        particles.slice(i + 1).forEach(b => {
-          const d = Math.hypot(a.x - b.x, a.y - b.y);
-          if (d < 150) {
-            ctx.beginPath();
-            ctx.moveTo(a.x, a.y);
-            ctx.lineTo(b.x, b.y);
-            const alpha = Math.floor((1 - d / 150) * 80).toString(16).padStart(2, '0');
-            ctx.strokeStyle = a.color + alpha;
-            ctx.lineWidth = 0.8;
-            ctx.stroke();
+      ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const p1 = particles[i]; const p2 = particles[j];
+          const dx = p1.x - p2.x; const dy = p1.y - p2.y; const dz = p1.z - p2.z;
+          const distSq = dx*dx + dy*dy + dz*dz;
+          if (distSq < 30000) {
+            const scale1 = 500 / p1.z; const x1 = (p1.x - width/2) * scale1 + width/2; const y1 = (p1.y - height/2) * scale1 + height/2;
+            const scale2 = 500 / p2.z; const x2 = (p2.x - width/2) * scale2 + width/2; const y2 = (p2.y - height/2) * scale2 + height/2;
+            const avgZ = (p1.z + p2.z) / 2; const alpha = Math.max(0, (1 - (avgZ / 2000)) * (1 - distSq/30000) * 0.4);
+            if (alpha > 0.05) { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.strokeStyle = p1.color === p2.color ? `rgba(255, 107, 53, ${alpha})` : `rgba(139, 26, 26, ${alpha})`; ctx.lineWidth = 1; ctx.stroke(); }
           }
-        });
-      });
-
+        }
+      }
       raf = requestAnimationFrame(animate);
     };
     animate();
-
-    const handleResize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('resize', handleResize);
-    };
+    return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', setSize); };
   }, []);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!email.trim() || !password.trim()) return;
+    setAuthError(null); setSuccessMsg(null); setIsSubmitting(true);
 
-    setIsSubmitting(true);
-    setTimeout(() => {
-      localStorage.setItem('barops_auth', JSON.stringify({ email, ts: Date.now() }));
-      onLogin();
-    }, 400);
+    try {
+      if (!supabase) {
+        // Fallback: si no hay Supabase, login simulado
+        localStorage.setItem('barops_auth', JSON.stringify({ email, role, ts: Date.now() }));
+        setTimeout(() => onLogin(role, email), 800);
+        return;
+      }
+
+      if (mode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password: password.trim(),
+          options: { data: { role, display_name: email.split('@')[0] } }
+        });
+        if (error) throw error;
+        if (data?.user?.identities?.length === 0) {
+          setAuthError('Este email ya está registrado. Inicia sesión.');
+          setMode('login');
+        } else {
+          setSuccessMsg('✅ Cuenta creada. Revisa tu email para confirmar, o inicia sesión directamente.');
+          setMode('login');
+        }
+      } else {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password: password.trim(),
+        });
+        if (error) throw error;
+        // onLogin will be triggered by onAuthStateChange listener in BarOps
+      }
+    } catch (err) {
+      const msg = err?.message || 'Error de autenticación';
+      const translations = {
+        'Invalid login credentials': 'Email o contraseña incorrectos',
+        'Email not confirmed': 'Confirma tu email antes de iniciar sesión',
+        'User already registered': 'Este email ya está registrado',
+        'Password should be at least 6 characters': 'La contraseña debe tener al menos 6 caracteres',
+        'Unable to validate email address: invalid format': 'Formato de email inválido',
+      };
+      setAuthError(translations[msg] || msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div style={{
-      position: 'fixed',
-      inset: 0,
-      background: '#0A0A0A',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontFamily: F,
-      zIndex: 9999,
-      overflow: 'hidden',
+      position: 'fixed', inset: 0, background: '#050505',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: F, zIndex: 9999, overflow: 'hidden',
     }}>
       <style>{`
         @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(50px); }
-          to { opacity: 1; transform: translateY(0); }
+          from { opacity: 0; transform: translateY(30px) scale(0.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
         }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.7; }
+        @keyframes borderGlow {
+          0%, 100% { box-shadow: 0 0 20px rgba(255,107,53,0.15), inset 0 0 15px rgba(255,107,53,0.05); border-color: rgba(255,107,53,0.3); }
+          50% { box-shadow: 0 0 45px rgba(255,107,53,0.5), inset 0 0 30px rgba(255,107,53,0.15); border-color: rgba(255,107,53,0.7); }
         }
-        @keyframes glow {
-          0%, 100% { box-shadow: 0 0 30px rgba(255, 107, 53, 0.2), inset 0 0 30px rgba(255, 107, 53, 0.05); }
-          50% { box-shadow: 0 0 50px rgba(255, 107, 53, 0.4), inset 0 0 30px rgba(255, 107, 53, 0.1); }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .login-card { animation: fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards, borderGlow 4s ease-in-out infinite; }
+        .input-field {
+          width: 100%; padding: 14px 16px; background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; color: #E8E8E8;
+          font-family: inherit; font-size: 14px; transition: all 0.3s ease; box-sizing: border-box;
         }
-        .login-card {
-          animation: fadeInUp 0.9s ease-out, glow 3s ease-in-out infinite;
+        .input-field:focus { outline: none; background: rgba(255, 255, 255, 0.06); border-color: #FF6B35; box-shadow: 0 0 0 4px rgba(255, 107, 53, 0.15); }
+        .input-field::placeholder { color: rgba(255, 255, 255, 0.3); }
+        .submit-btn {
+          width: 100%; padding: 16px; background: linear-gradient(135deg, #FF6B35, #E85A25);
+          border: none; border-radius: 12px; color: #000; font-family: inherit; font-size: 13px; font-weight: 800;
+          letter-spacing: 1.5px; cursor: pointer; transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+          text-transform: uppercase; box-shadow: 0 4px 15px rgba(255, 107, 53, 0.3);
+          position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; gap: 10px;
         }
-        input::placeholder { color: #555; }
-        input:focus {
-          outline: none;
-          border-color: #FF6B35;
-          box-shadow: 0 0 20px rgba(255, 107, 53, 0.5), inset 0 0 10px rgba(255, 107, 53, 0.1);
-          background: rgba(20, 20, 20, 0.8);
-        }
+        .submit-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(255, 107, 53, 0.5); }
+        .submit-btn:active:not(:disabled) { transform: translateY(1px); }
+        .submit-btn:disabled { opacity: 0.8; cursor: not-allowed; filter: grayscale(50%); }
+        .spinner { width: 18px; height: 18px; border: 2px solid rgba(0,0,0,0.2); border-top-color: #000; border-radius: 50%; animation: spin 0.8s linear infinite; }
       `}</style>
 
-      <canvas ref={canvasRef} style={{
-        position: 'absolute',
-        inset: 0,
-        zIndex: 1,
-      }} />
+      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, zIndex: 1, width: '100%', height: '100%' }} />
 
       <div className="login-card" style={{
-        position: 'relative',
-        zIndex: 10,
-        width: '100%',
-        maxWidth: '480px',
-        padding: '56px 48px',
-        background: 'rgba(15, 15, 15, 0.92)',
-        backdropFilter: 'blur(40px)',
-        WebkitBackdropFilter: 'blur(40px)',
-        border: '2px solid',
-        borderImage: 'linear-gradient(135deg, rgba(255, 107, 53, 0.6), rgba(139, 26, 26, 0.4)) 1',
-        borderRadius: '20px',
-        boxShadow: '0 0 60px rgba(255, 107, 53, 0.15), inset 0 0 60px rgba(255, 107, 53, 0.03), 0 25px 50px rgba(0, 0, 0, 0.5)',
+        position: 'relative', zIndex: 10, width: '100%', maxWidth: '420px',
+        margin: '0 20px', padding: '48px 40px',
+        background: 'rgba(10, 10, 10, 0.45)',
+        backdropFilter: 'blur(30px)', WebkitBackdropFilter: 'blur(30px)',
+        borderRadius: '24px',
       }}>
         <div style={{ textAlign: 'center', marginBottom: '40px' }}>
           <div style={{
-            width: '56px',
-            height: '56px',
-            margin: '0 auto 16px',
-            background: 'linear-gradient(135deg, #FF6B35, #8B1A1A)',
-            borderRadius: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '28px',
-            boxShadow: '0 0 25px rgba(255, 107, 53, 0.4)',
-          }}>🍹</div>
-          <h1 style={{
-            fontSize: '32px',
-            fontWeight: 900,
-            color: '#E8E8E8',
-            margin: '0 0 8px',
-            letterSpacing: '3px',
-            textShadow: '0 2px 8px rgba(255, 107, 53, 0.2)',
-          }}>BAROPS</h1>
-          <p style={{
-            fontSize: '13px',
-            color: '#FF6B35',
-            margin: '0 0 20px',
-            letterSpacing: '2px',
-            fontWeight: 600,
-          }}>SISTEMA OPERATIVO DEL BAR</p>
-          <div style={{
-            height: '1px',
-            background: 'linear-gradient(90deg, transparent, #FF6B35, transparent)',
-            margin: '20px 0',
-          }} />
-          <p style={{
-            fontSize: '14px',
-            color: '#CCC',
-            margin: '20px 0 0',
-            fontStyle: 'italic',
-            fontWeight: 500,
+            width: '80px', height: '80px', margin: '0 auto 20px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            filter: 'drop-shadow(0 10px 25px rgba(255, 107, 53, 0.4))',
+            borderRadius: '50%', overflow: 'hidden', background: '#050505',
+            border: '2px solid rgba(255, 107, 53, 0.3)'
           }}>
-            Gestiona tu bar como nunca antes. <br/>
-            <span style={{ color: '#FF6B35', fontWeight: 700 }}>Velocidad, precisión, control.</span>
-          </p>
+            <img src="/logo.png" style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="BarOps Logo" />
+          </div>
+          <h1 style={{ fontSize:'28px', fontWeight: 900, color: '#FFF', margin: '0 0 6px', letterSpacing: '2px' }}>BAROPS</h1>
+          <p style={{ fontSize:'14px', color: '#FF6B35', margin: '0', letterSpacing: '3px', fontWeight: 700, textTransform: 'uppercase' }}>Sistema Operativo</p>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+        {/* Auth error/success messages */}
+        {authError && (
+          <div style={{ padding:'12px 16px', background:'#EF444420', border:'1px solid #EF444466', borderRadius:8, marginBottom:16, fontSize:'13px', color:'#EF4444', letterSpacing:'0.5px' }}>
+            ⚠️ {authError}
+          </div>
+        )}
+        {successMsg && (
+          <div style={{ padding:'12px 16px', background:'#22C55E20', border:'1px solid #22C55E66', borderRadius:8, marginBottom:16, fontSize:'13px', color:'#22C55E', letterSpacing:'0.5px' }}>
+            {successMsg}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div>
             <label style={{
-              display: 'block',
-              fontSize: '11px',
-              color: '#999',
-              letterSpacing: '1.8px',
-              marginBottom: '10px',
-              textTransform: 'uppercase',
-              fontWeight: 700,
-            }}>Correo Electrónico</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="tu@email.com"
-              style={{
-                width: '100%',
-                padding: '14px 16px',
-                background: 'rgba(20, 20, 20, 0.8)',
-                border: '2px solid rgba(255, 107, 53, 0.2)',
-                borderRadius: '10px',
-                color: '#E8E8E8',
-                fontFamily: F,
-                fontSize: '14px',
-                transition: 'all 0.3s',
-              }}
-            />
+              display: 'block', fontSize:'13px', color: focusedInput === 'email' ? '#FF6B35' : '#888',
+              letterSpacing: '1.5px', marginBottom: '8px', textTransform: 'uppercase',
+              fontWeight: 700, transition: 'color 0.3s'
+            }}>Email</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              onFocus={() => setFocusedInput('email')} onBlur={() => setFocusedInput(null)}
+              placeholder="tu@email.com" className="input-field" />
           </div>
 
           <div>
             <label style={{
-              display: 'block',
-              fontSize: '11px',
-              color: '#999',
-              letterSpacing: '1.8px',
-              marginBottom: '10px',
-              textTransform: 'uppercase',
-              fontWeight: 700,
+              display: 'block', fontSize:'13px', color: focusedInput === 'password' ? '#FF6B35' : '#888',
+              letterSpacing: '1.5px', marginBottom: '8px', textTransform: 'uppercase',
+              fontWeight: 700, transition: 'color 0.3s'
             }}>Contraseña</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              style={{
-                width: '100%',
-                padding: '14px 16px',
-                background: 'rgba(20, 20, 20, 0.8)',
-                border: '2px solid rgba(255, 107, 53, 0.2)',
-                borderRadius: '10px',
-                color: '#E8E8E8',
-                fontFamily: F,
-                fontSize: '14px',
-                transition: 'all 0.3s',
-              }}
-            />
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+              onFocus={() => setFocusedInput('password')} onBlur={() => setFocusedInput(null)}
+              placeholder="••••••••" className="input-field" />
           </div>
 
-          <button
-            type="submit"
-            disabled={isSubmitting || !email.trim() || !password.trim()}
-            style={{
-              width: '100%',
-              padding: '16px',
-              background: 'linear-gradient(135deg, #FF6B35, #E85A25)',
-              border: 'none',
-              borderRadius: '10px',
-              color: '#000000',
-              fontFamily: F,
-              fontSize: '13px',
-              fontWeight: 900,
-              letterSpacing: '2px',
-              cursor: isSubmitting ? 'wait' : 'pointer',
-              transition: 'all 0.3s',
-              opacity: isSubmitting ? 0.8 : 1,
-              transform: isSubmitting ? 'scale(0.98)' : 'scale(1)',
-              textTransform: 'uppercase',
-              boxShadow: '0 8px 25px rgba(255, 107, 53, 0.3)',
-            }}
-            onMouseEnter={(e) => !isSubmitting && (e.target.style.boxShadow = '0 12px 35px rgba(255, 107, 53, 0.5)')}
-            onMouseLeave={(e) => (e.target.style.boxShadow = '0 8px 25px rgba(255, 107, 53, 0.3)')}
-          >
-            {isSubmitting ? '⏳ ENTRANDO...' : '→ ENTRAR AL SISTEMA'}
-          </button>
+          {mode === 'signup' && (
+            <div>
+              <label style={{ display: 'block', fontSize:'13px', color: '#888', letterSpacing: '1.5px', marginBottom: '8px', textTransform: 'uppercase', fontWeight: 700 }}>Rol</label>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '8px', cursor: 'pointer', border: role === 'manager' ? '1px solid #FF6B35' : '1px solid transparent' }}>
+                  <input type="radio" name="role" value="manager" checked={role === 'manager'} onChange={(e) => setRole(e.target.value)} style={{ accentColor: '#FF6B35' }} />
+                  <span style={{ color: role === 'manager' ? '#FF6B35' : '#888', fontSize: '12px', fontWeight: 700 }}>MANAGER</span>
+                </label>
+                <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '8px', cursor: 'pointer', border: role === 'bartender' ? '1px solid #FF6B35' : '1px solid transparent' }}>
+                  <input type="radio" name="role" value="bartender" checked={role === 'bartender'} onChange={(e) => setRole(e.target.value)} style={{ accentColor: '#FF6B35' }} />
+                  <span style={{ color: role === 'bartender' ? '#FF6B35' : '#888', fontSize: '12px', fontWeight: 700 }}>BARTENDER</span>
+                </label>
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
+            <button type="submit" disabled={isSubmitting || !email.trim() || !password.trim()} className="submit-btn">
+              {isSubmitting ? (
+                <><div className="spinner"></div> {mode === 'signup' ? 'CREANDO CUENTA...' : 'AUTENTICANDO...'}</>
+              ) : (
+                mode === 'signup' ? 'CREAR CUENTA' : 'INICIAR SESIÓN'
+              )}
+            </button>
+            <button type="button" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setAuthError(null); setSuccessMsg(null); }} className="submit-btn" style={{
+              background: 'transparent', border: '1px solid rgba(255, 107, 53, 0.5)',
+              color: '#FF6B35', boxShadow: 'none'
+            }}>
+              {mode === 'login' ? 'CREAR CUENTA' : 'YA TENGO CUENTA'}
+            </button>
+          </div>
         </form>
 
-        <div style={{
-          marginTop: '24px',
-          paddingTop: '20px',
-          borderTop: '1px solid rgba(255, 107, 53, 0.15)',
-          textAlign: 'center',
-          fontSize: '11px',
-          color: '#666',
-          letterSpacing: '0.5px',
-        }}>
-          Demo: cualquier email / contraseña | v1.0
+        <div style={{ marginTop: '32px', textAlign: 'center', fontSize:'13px', color: '#555', letterSpacing: '0.5px' }}>
+          {supabase ? '🔐 Autenticación segura con Supabase' : '⚡ Demo Mode — sin conexión a Supabase'}
         </div>
       </div>
     </div>
@@ -5658,7 +5894,63 @@ function LoginPage({ onLogin }) {
 }
 
 export default function BarOps() {
-  const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem('barops_auth'));
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [cartItems, setCartItems] = useState([]);
+  const [showCartDrawer, setShowCartDrawer] = useState(false);
+  const [userRole, setUserRole] = useState('manager');
+  const [userEmail, setUserEmail] = useState('');
+
+  // ─── Supabase Auth State Listener ─────────────────────────────────────
+  useEffect(() => {
+    if (!supabase) {
+      // Fallback: check localStorage for demo mode
+      const stored = localStorage.getItem('barops_auth');
+      if (stored) {
+        try {
+          const auth = JSON.parse(stored);
+          setUserRole(auth?.role || 'manager');
+          setUserEmail(auth?.email || '');
+          setIsLoggedIn(true);
+        } catch { /* ignore */ }
+      }
+      setAuthLoading(false);
+      return;
+    }
+
+    // Check existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUserRole(session.user.user_metadata?.role || 'manager');
+        setUserEmail(session.user.email || '');
+        setIsLoggedIn(true);
+      }
+      setAuthLoading(false);
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        setUserRole(session.user.user_metadata?.role || 'manager');
+        setUserEmail(session.user.email || '');
+        setIsLoggedIn(true);
+      } else if (event === 'SIGNED_OUT') {
+        setIsLoggedIn(false);
+        setUserRole('manager');
+        setUserEmail('');
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    localStorage.removeItem('barops_auth');
+    setIsLoggedIn(false);
+  };
 
   const params = new URLSearchParams(window.location.search);
   const initialScreen = (params.get('payment') === 'success' || params.get('session_id')) ? 'success' : 'dashboard';
@@ -5676,15 +5968,13 @@ export default function BarOps() {
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
   const [showMoreSheet, setShowMoreSheet] = useState(false);
 
-  const handleLogin = () => {
+  const handleLogin = (role, email) => {
     setTimeout(() => {
+      setUserRole(role);
+      setUserEmail(email || '');
       setIsLoggedIn(true);
     }, 100);
   };
-
-  if (!isLoggedIn) {
-    return <LoginPage onLogin={handleLogin} />;
-  }
 
   // Sincroniza el nombre del local desde Supabase (best-effort, localStorage manda)
   const fetchLocalName = async () => {
@@ -5758,7 +6048,7 @@ export default function BarOps() {
       nombre: item.name,
       categoria: item.cat,
       unidad: item.unit,
-      stock_actual: item.pct || 0,
+      stock_actual: typeof item.rawStock === 'number' ? item.rawStock : (item.stock || 0),
       stock_minimo: 0,
       coste_unitario: item.cpu
     }));
@@ -5781,12 +6071,30 @@ export default function BarOps() {
     }
   };
 
-  const ctx = { customIngs, customInv, addFromImport, inventoryLoading, localName, setLocalName, setScreen };
+  const savePedido = async ({ proveedor, items, canal }) => {
+    if (!supabase) return;
+    try {
+      const { error } = await supabase.from('pedidos').insert({
+        local_id: '00000000-0000-0000-0000-000000000001',
+        proveedor,
+        items: JSON.stringify(items.map(i => ({ nombre: i.nombre, categoria: i.categoria, qty: i.qty, unidad: i.unidad }))),
+        estado: canal === 'manual' ? 'pendiente' : 'enviado',
+        canal,
+        creado_por: userEmail,
+      });
+      if (error) console.error('Error guardando pedido:', error);
+    } catch (err) {
+      console.error('savePedido error:', err);
+    }
+  };
+
+  const ctx = { customIngs, customInv, addFromImport, fetchInventory, localName, setLocalName, userRole, setScreen, cartItems, setCartItems, setShowCartDrawer, savePedido, inventoryLoading };
 
   const getScreenComponent = () => {
     const screens = {
       dashboard:  <Dashboard onNavigate={setScreen}/>,
       inventario: <Inventario/>,
+      historial:  <HistorialPedidos/>,
       staffing:   <Staffing/>,
       agente:     <AgenteIA/>,
       analytics:  <Analytics/>,
@@ -5805,6 +6113,10 @@ export default function BarOps() {
   }, []);
 
   try {
+    if (!isLoggedIn) {
+      return <LoginPage onLogin={handleLogin} />;
+    }
+
     return (
       <AppCtx.Provider value={ctx}>
         <div style={{ display:'flex', flexDirection:isMobile?'column':'row', width:'100%', height:'100vh', background:C.bg, overflow:'hidden', fontFamily:F }}>
@@ -5824,7 +6136,7 @@ export default function BarOps() {
             }
           `}</style>
 
-          {!isMobile && <Sidebar active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={()=>setShowLocalDrawer(true)}/>}
+          {!isMobile && <Sidebar active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={()=>setShowLocalDrawer(true)} onLogout={handleLogout}/>}
 
           <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', marginTop:isMobile?56:0, paddingBottom:isMobile?60:0 }}>
             {getScreenComponent()}
@@ -5833,13 +6145,21 @@ export default function BarOps() {
 
         {isMobile && (
           <>
-            <MobileTopBar screen={screen} onMenuOpen={() => setShowMobileDrawer(true)} localName={localName} />
+            <MobileTopBar screen={screen} localName={localName} />
             <MobileBottomNav active={screen} setActive={setScreen} onMoreOpen={() => setShowMoreSheet(true)} />
-            <MobileDrawer isOpen={showMobileDrawer} onClose={() => setShowMobileDrawer(false)} active={screen} setActive={setScreen} localName={localName} onOpenLocalSettings={() => { setShowLocalDrawer(true); setShowMobileDrawer(false); }} />
-            <MoreBottomSheet isOpen={showMoreSheet} onClose={() => setShowMoreSheet(false)} setScreen={(s) => { setScreen(s); setShowMoreSheet(false); }} />
+            <MoreBottomSheet isOpen={showMoreSheet} onClose={() => setShowMoreSheet(false)} setScreen={setScreen} onOpenLocalSettings={() => { setShowLocalDrawer(true); setShowMoreSheet(false); }} onLogout={handleLogout} />
           </>
         )}
 
+        {/* Floating Action Button for Cart (Desktop) */}
+        {(!isMobile && cartItems && cartItems.length > 0) && (
+          <div onClick={() => setShowCartDrawer(true)} style={{ position:'fixed', top:24, right:24, cursor:'pointer', display:'flex', alignItems:'center', gap:10, background:C.orange, padding:'10px 18px', borderRadius:20, color:'#000', zIndex:5000, boxShadow:'0 10px 25px rgba(255,107,53,0.3)', transition:'transform 0.2s' }} onMouseEnter={e=>e.currentTarget.style.transform='scale(1.05)'} onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'}>
+            <ShoppingCart size={18}/>
+            <span style={{ fontSize:14, fontWeight:800, fontFamily:F }}>{cartItems.length} ITEMS</span>
+          </div>
+        )}
+
+        <CartDrawer isOpen={showCartDrawer} onClose={()=>setShowCartDrawer(false)} />
         <LocalDrawer isOpen={showLocalDrawer} onClose={()=>setShowLocalDrawer(false)} localName={localName} onLocalNameChange={setLocalName}/>
       </AppCtx.Provider>
     );
